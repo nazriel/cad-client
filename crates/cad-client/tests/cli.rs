@@ -1,0 +1,198 @@
+//! Black-box coverage of the shipped `cad-cli` binary.
+//!
+//! Everything here is asserted from outside the process: exit codes, the split
+//! between stdout and stderr, and the bytes a machine-readable run produces.
+//! That is the contract users and scripts depend on, and it is the one thing an
+//! in-process test of `execute()` cannot check.
+
+use assert_cmd::Command;
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use predicates::prelude::*;
+use uuid::Uuid;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+const COMPANY_ID: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0042);
+const EXCHANGE_PATH: &str = "/api/keys/v1/api/auth";
+const COMPANIES_PATH: &str = "/api/accounts/v1/companies";
+
+/// A `cad-cli` invocation with the ambient CAD environment scrubbed, so a
+/// developer's own credentials cannot change what the test observes.
+fn cad_cli() -> Command {
+    let mut command = Command::cargo_bin("cad-cli").expect("the binary is built for tests");
+    for key in [
+        "CAD_API_KEY",
+        "CAD_API_SECRET",
+        "CAD_SERVER_URL",
+        "CAD_ENV",
+        "CAD_COMPANY_ID",
+    ] {
+        command.env_remove(key);
+    }
+    command
+}
+
+fn with_credentials() -> Command {
+    let mut command = cad_cli();
+    command
+        .env("CAD_API_KEY", Uuid::nil().to_string())
+        .env("CAD_API_SECRET", "secret");
+    command
+}
+
+fn access_token() -> String {
+    let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"none"}"#);
+    let payload = URL_SAFE_NO_PAD.encode(
+        serde_json::json!({
+            "exp": chrono::Utc::now().timestamp() + 300,
+            "userId": Uuid::nil(),
+            "com": COMPANY_ID,
+            "clientCompanyId": COMPANY_ID,
+        })
+        .to_string(),
+    );
+    format!("{header}.{payload}.")
+}
+
+async fn mock_exchange(server: &MockServer, response: ResponseTemplate) {
+    Mock::given(method("POST"))
+        .and(path(EXCHANGE_PATH))
+        .respond_with(response)
+        .mount(server)
+        .await;
+}
+
+/// Runs the binary off the async runtime so the mock server keeps serving.
+async fn run(command: Command) -> assert_cmd::assert::Assert {
+    tokio::task::spawn_blocking(move || {
+        let mut command = command;
+        command.assert()
+    })
+    .await
+    .expect("the child process ran to completion")
+}
+
+#[test]
+fn help_lists_every_command_group_and_exits_zero() {
+    let assert = cad_cli().arg("--help").assert().success();
+    let stdout = predicate::str::contains("company")
+        .and(predicate::str::contains("reporting-period"))
+        .and(predicate::str::contains("inventory-line"))
+        .and(predicate::str::contains("document"))
+        .and(predicate::str::contains("custom-field"))
+        .and(predicate::str::contains("custom-option"))
+        .and(predicate::str::contains("report"))
+        .and(predicate::str::contains("context"));
+    assert.stdout(stdout);
+}
+
+#[test]
+fn generated_artefacts_need_no_credentials_or_server() {
+    // Both are derived from the command definition, so they must run before any
+    // configuration is resolved — an unconfigured machine can still install them.
+    cad_cli()
+        .args(["completions", "bash"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("cad-cli").and(predicate::str::contains("company")));
+
+    cad_cli()
+        .arg("man")
+        .assert()
+        .success()
+        .stdout(predicate::str::starts_with(".ie \\n(.g"));
+}
+
+#[test]
+fn missing_credentials_name_the_variable_and_exit_two() {
+    cad_cli()
+        .args(["--environment", "staging", "company", "list"])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains("CAD_API_KEY"));
+}
+
+#[test]
+fn an_unknown_flag_is_a_usage_error() {
+    cad_cli()
+        .args(["--definitely-not-a-flag", "company", "list"])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn company_list_writes_only_json_to_stdout() {
+    let server = MockServer::start().await;
+    mock_exchange(
+        &server,
+        ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "accessToken": access_token(),
+            "tokenType": "Bearer",
+            "refreshToken": "refresh"
+        })),
+    )
+    .await;
+    Mock::given(method("GET"))
+        .and(path(COMPANIES_PATH))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!([{
+                "id": COMPANY_ID,
+                "name": "Acme",
+                "displayName": "Acme NV",
+                "createdAt": "2026-01-01T00:00:00Z",
+                "isConsultingCompany": false,
+                "isDemoCompany": false,
+                "availableClientCompanies": null,
+                "companyStatus": "ACTIVE"
+            }])),
+        )
+        .mount(&server)
+        .await;
+
+    // This is exactly what the insecure-loopback opt-in exists for.
+    let mut command = with_credentials();
+    command.args([
+        "--server-url",
+        &server.uri(),
+        "--allow-insecure-http",
+        "--output",
+        "json",
+        "company",
+        "list",
+    ]);
+
+    let output = run(command).await.success().get_output().clone();
+    let rendered: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout is nothing but JSON");
+    assert_eq!(rendered[0]["displayName"], "Acme NV");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rejected_credentials_exit_three() {
+    let server = MockServer::start().await;
+    // Staging answers an unknown API key with 404 rather than 401; both must
+    // still be an authentication failure.
+    mock_exchange(
+        &server,
+        ResponseTemplate::new(404)
+            .set_body_json(serde_json::json!({"msg": "No ApiKey found for id 0"})),
+    )
+    .await;
+
+    let mut command = with_credentials();
+    command.args([
+        "--server-url",
+        &server.uri(),
+        "--allow-insecure-http",
+        "company",
+        "list",
+    ]);
+
+    run(command)
+        .await
+        .code(3)
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains("No ApiKey found"));
+}
