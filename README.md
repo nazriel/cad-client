@@ -216,33 +216,6 @@ copy job; its input extends the create object with `duplicatedReportingPeriodId`
 and the required booleans `duplicateEntries`, `duplicateNotes`, and
 `duplicateAttachments`. Poll an existing job with `duplication-status <id>`.
 
-## Activity categories
-
-Activity categories describe the sources included in the company inventory. Inspect
-the credential-free contract before automating writes:
-
-```console
-cad-cli activity-category --help
-cad-cli schema activity-category > activity-category-cli-schema.json
-```
-
-List categories, update one from stdin, or duplicate an existing category:
-
-```console
-cad-cli --output json activity-category list
-printf '%s' '{"name":"Purchased Electricity","description":"Electricity purchased for operations.","inclusionCriteria":"Includes purchased electricity.","exclusionCriteria":"Excludes onsite generation.","activityCategoryType":"PURCHASED_ELECTRICITY","activityGroupName":"Scope 2","activityGroupId":"00000000-0000-0000-0000-000000000001","position":0,"isIncluded":true}' | \
-  cad-cli --output json activity-category update 00000000-0000-0000-0000-000000000002 --input -
-cad-cli --output json activity-category duplicate 00000000-0000-0000-0000-000000000002
-```
-
-Writes require the category name, description, inclusion and exclusion criteria,
-`activityCategoryType`, parent `activityGroupId`, zero-based `position`, and
-`isIncluded`. `activityGroupName` is optional. Category names are limited to 128
-characters. The deprecated API create route is intentionally not exposed by the
-CLI. The platform returns server-managed fields such as `id`, measurement counts,
-default status, and scope/reference metadata. `delete <id>` asks for confirmation
-unless `--yes` is supplied.
-
 ## Activity groups
 
 Activity groups organize activity categories, such as Scope 1 and Scope 2. Inspect
