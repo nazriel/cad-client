@@ -25,6 +25,7 @@ fn cad_cli() -> Command {
         "CAD_SERVER_URL",
         "CAD_ENV",
         "CAD_COMPANY_ID",
+        "RUST_LOG",
     ] {
         command.env_remove(key);
     }
@@ -67,6 +68,7 @@ fn help_lists_every_command_group_and_exits_zero() {
         .and(predicate::str::contains("custom-field"))
         .and(predicate::str::contains("custom-option"))
         .and(predicate::str::contains("report"))
+        .and(predicate::str::contains("schema"))
         .and(predicate::str::contains("context"));
     assert.stdout(stdout);
 }
@@ -86,6 +88,17 @@ fn generated_artefacts_need_no_credentials_or_server() {
         .assert()
         .success()
         .stdout(predicate::str::starts_with(".ie \\n(.g"));
+
+    let output = cad_cli()
+        .args(["schema", "benchmark"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let schema: serde_json::Value = serde_json::from_slice(&output).expect("schema output is JSON");
+    assert_eq!(schema["resource"], "benchmark");
+    assert_eq!(schema["serverManagedFields"], serde_json::json!(["id"]));
 }
 
 #[test]
@@ -108,7 +121,7 @@ fn an_unknown_flag_is_a_usage_error() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn company_list_writes_only_json_to_stdout() {
+async fn company_list_keeps_debug_logs_out_of_json_stdout() {
     let server = MockServer::start().await;
     mock_identity(
         &server,
@@ -143,6 +156,7 @@ async fn company_list_writes_only_json_to_stdout() {
 
     // This is exactly what the insecure-loopback opt-in exists for.
     let mut command = with_credentials();
+    command.env("RUST_LOG", "debug");
     command.args([
         "--server-url",
         &server.uri(),

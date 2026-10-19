@@ -1,5 +1,6 @@
 //! Command groups exposed by the CLI.
 
+pub mod benchmark;
 pub mod company;
 pub mod context;
 pub mod custom_field;
@@ -9,6 +10,7 @@ pub mod generate;
 pub mod inventory_line;
 pub mod report;
 pub mod reporting_period;
+pub mod schema;
 
 use clap::Subcommand;
 use serde_json::Value;
@@ -21,6 +23,8 @@ use crate::support::terminal::Terminal;
 /// Top-level `cad-cli` command.
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Read and update the company benchmark.
+    Benchmark(benchmark::Group),
     /// Show the authenticated session context.
     Context(context::Group),
     /// Inspect companies available to the current API key.
@@ -37,6 +41,8 @@ pub enum Command {
     CustomOption(custom_option::Group),
     /// Create and inspect generated reports.
     Report(report::Group),
+    /// Print a machine-readable schema for a CLI resource.
+    Schema(schema::Group),
     /// Print a shell completion script.
     Completions(generate::CompletionsArgs),
     /// Print the manual page in roff format.
@@ -46,6 +52,7 @@ pub enum Command {
 impl Command {
     pub(crate) fn into_invocation(self) -> Invocation {
         match self {
+            Self::Benchmark(group) => Invocation::Online(OnlineCommand::Benchmark(group)),
             Self::Context(group) => Invocation::Online(OnlineCommand::Context(group)),
             Self::Company(group) => Invocation::Online(OnlineCommand::Company(group)),
             Self::ReportingPeriod(group) => {
@@ -56,6 +63,7 @@ impl Command {
             Self::CustomField(group) => Invocation::Online(OnlineCommand::CustomField(group)),
             Self::CustomOption(group) => Invocation::Online(OnlineCommand::CustomOption(group)),
             Self::Report(group) => Invocation::Online(OnlineCommand::Report(group)),
+            Self::Schema(group) => Invocation::Offline(OfflineCommand::Schema(group)),
             Self::Completions(args) => Invocation::Offline(OfflineCommand::Completions(args)),
             Self::Man => Invocation::Offline(OfflineCommand::Man),
         }
@@ -74,6 +82,7 @@ pub(crate) enum Invocation {
 }
 
 pub(crate) enum OfflineCommand {
+    Schema(schema::Group),
     Completions(generate::CompletionsArgs),
     Man,
 }
@@ -83,6 +92,7 @@ impl OfflineCommand {
     /// `--output` formats entirely.
     pub(crate) fn run(self, terminal: &dyn Terminal) -> Result<(), CliError> {
         match self {
+            Self::Schema(group) => group.run(terminal),
             Self::Completions(args) => args.run(terminal),
             Self::Man => generate::man(terminal),
         }
@@ -97,6 +107,7 @@ impl OfflineCommand {
 /// client or an `SdkAdapter` cannot be run without scoping, because scoping is
 /// the only way to obtain either.
 pub(crate) enum OnlineCommand {
+    Benchmark(benchmark::Group),
     Context(context::Group),
     Company(company::Group),
     ReportingPeriod(reporting_period::Group),
@@ -114,6 +125,7 @@ impl OnlineCommand {
         platform: &Platform,
     ) -> Result<Value, CliError> {
         match self {
+            Self::Benchmark(group) => group.run(context, platform.scoped().await?.client()).await,
             // Session-level commands neither prompt nor read local input, so
             // they ignore the [`CommandContext`].
             Self::Context(group) => {

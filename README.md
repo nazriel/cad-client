@@ -71,6 +71,62 @@ selected company ID to stderr.
 Authorization headers, request bodies, and URL query strings are never logged.
 All platform API paths, including machine identity, are rooted at `/api/`.
 
+## Benchmarks
+
+A company has one benchmark. Although the platform endpoint returns a
+one-item collection, `benchmark read`, `create`, and `update` return one JSON
+object; callers never need to discover or supply the benchmark ID.
+
+Inspect the command contract before use. `schema` is an offline,
+credential-free JSON interface designed for automation and LLM clients:
+
+```console
+cad-cli schema list
+cad-cli schema benchmark > benchmark-cli-schema.json
+cad-cli benchmark --help
+cad-cli benchmark update --help
+```
+
+Read the current benchmark in a machine-readable form:
+
+```console
+cad-cli --output json benchmark read
+```
+
+Create or update the benchmark using an ID-free JSON object:
+
+```console
+cad-cli --output json benchmark update --input benchmark.json
+printf '%s' '{"reportingPeriodId":"00000000-0000-0000-0000-000000000001","fullTimeEmployees":42,"grossAnnualRevenue":null,"grossAnnualRevenueUnitId":"00000000-0000-0000-0000-000000000002","highLevelSectorCode":"C","lowLevelSectorCode":null,"location":"DENMARK"}' | \
+  cad-cli --output json benchmark update --input -
+```
+
+`benchmark.json` must contain `reportingPeriodId` and
+`grossAnnualRevenueUnitId`. The remaining fields are optional; when supplied,
+`null` is accepted for `fullTimeEmployees`, `grossAnnualRevenue`, and each
+sector/location code:
+
+```json
+{
+  "reportingPeriodId": "00000000-0000-0000-0000-000000000001",
+  "fullTimeEmployees": 42,
+  "grossAnnualRevenue": null,
+  "grossAnnualRevenueUnitId": "00000000-0000-0000-0000-000000000002",
+  "highLevelSectorCode": "C",
+  "lowLevelSectorCode": null,
+  "location": "DENMARK"
+}
+```
+
+`reportingPeriodId` and `grossAnnualRevenueUnitId` are platform UUIDs.
+The platform validates positive `fullTimeEmployees` and `grossAnnualRevenue`
+values when present; `grossAnnualRevenue` is expressed in the selected revenue
+unit. Enum spellings
+are case-sensitive; inspect `cad-cli schema benchmark` for the complete
+`HighLevelSectorCode`, `LowLevelSectorCode`, and `Location` value sets. For
+example, `"C"` and `"DENMARK"` are valid. `sectorGroup` is derived by the
+platform and appears only in responses.
+
 ## Shell completions and manual page
 
 Both are generated from the command definition itself, so they never drift from
