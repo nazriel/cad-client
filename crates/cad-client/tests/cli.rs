@@ -25,6 +25,7 @@ fn cad_cli() -> Command {
         "CAD_SERVER_URL",
         "CAD_ENV",
         "CAD_COMPANY_ID",
+        "RUST_LOG",
     ] {
         command.env_remove(key);
     }
@@ -120,7 +121,7 @@ fn an_unknown_flag_is_a_usage_error() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn company_list_writes_only_json_to_stdout() {
+async fn company_list_keeps_debug_logs_out_of_json_stdout() {
     let server = MockServer::start().await;
     mock_identity(
         &server,
@@ -155,6 +156,7 @@ async fn company_list_writes_only_json_to_stdout() {
 
     // This is exactly what the insecure-loopback opt-in exists for.
     let mut command = with_credentials();
+    command.env("RUST_LOG", "debug");
     command.args([
         "--server-url",
         &server.uri(),
