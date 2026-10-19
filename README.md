@@ -216,6 +216,30 @@ copy job; its input extends the create object with `duplicatedReportingPeriodId`
 and the required booleans `duplicateEntries`, `duplicateNotes`, and
 `duplicateAttachments`. Poll an existing job with `duplication-status <id>`.
 
+## Activity groups
+
+Activity groups organize activity categories, such as Scope 1 and Scope 2. Inspect
+the credential-free CLI contract before automating writes:
+
+```console
+cad-cli activity-group --help
+cad-cli schema activity-group > activity-group-cli-schema.json
+```
+
+List groups or create and update one with an ID-free JSON object:
+
+```console
+cad-cli --output json activity-group list
+printf '%s' '{"position":0,"name":"Scope 1","description":"Direct emissions from owned sources."}' | \
+  cad-cli --output json activity-group create --input -
+cad-cli --output json activity-group update 00000000-0000-0000-0000-000000000001 --input activity-group.json
+```
+
+Every write requires a zero-based non-negative `position`, a `name` of at most
+128 characters, and a `description`. The platform assigns the `id` returned by
+create and update; it must not be included in input. `delete <id>` asks for
+confirmation unless `--yes` is supplied.
+
 ## Organizational units
 
 Organizational units form the company hierarchy. Inspect the credential-free

@@ -1,5 +1,6 @@
 //! Command groups exposed by the CLI.
 
+pub mod activity_group;
 pub mod benchmark;
 pub mod company;
 pub mod context;
@@ -24,6 +25,8 @@ use crate::support::terminal::Terminal;
 /// Top-level `cad-cli` command.
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Manage the company's activity groups.
+    ActivityGroup(activity_group::Group),
     /// Read and update the company benchmark.
     Benchmark(benchmark::Group),
     /// Show the authenticated session context.
@@ -55,6 +58,7 @@ pub enum Command {
 impl Command {
     pub(crate) fn into_invocation(self) -> Invocation {
         match self {
+            Self::ActivityGroup(group) => Invocation::Online(OnlineCommand::ActivityGroup(group)),
             Self::Benchmark(group) => Invocation::Online(OnlineCommand::Benchmark(group)),
             Self::Context(group) => Invocation::Online(OnlineCommand::Context(group)),
             Self::Company(group) => Invocation::Online(OnlineCommand::Company(group)),
@@ -113,6 +117,7 @@ impl OfflineCommand {
 /// client or an `SdkAdapter` cannot be run without scoping, because scoping is
 /// the only way to obtain either.
 pub(crate) enum OnlineCommand {
+    ActivityGroup(activity_group::Group),
     Benchmark(benchmark::Group),
     Context(context::Group),
     Company(company::Group),
@@ -132,6 +137,9 @@ impl OnlineCommand {
         platform: &Platform,
     ) -> Result<Value, CliError> {
         match self {
+            Self::ActivityGroup(group) => {
+                group.run(context, platform.scoped().await?.client()).await
+            }
             Self::Benchmark(group) => group.run(context, platform.scoped().await?.client()).await,
             // Session-level commands neither prompt nor read local input, so
             // they ignore the [`CommandContext`].

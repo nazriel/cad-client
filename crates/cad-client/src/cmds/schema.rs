@@ -24,6 +24,8 @@ pub struct Group {
 enum Command {
     /// List resources with schemas available from this CLI.
     List,
+    /// Print the CLI schema for company activity groups.
+    ActivityGroup,
     /// Print the CLI schema for the singleton company benchmark.
     Benchmark,
     /// Print the CLI schema for company reporting periods.
@@ -36,6 +38,7 @@ impl Group {
     pub(crate) fn run(self, terminal: &dyn Terminal) -> Result<(), CliError> {
         let document = match self.command {
             Command::List => list_schema(),
+            Command::ActivityGroup => super::activity_group::schema(),
             Command::Benchmark => super::benchmark::schema(),
             Command::ReportingPeriod => super::reporting_period::schema(),
             Command::OrganizationalUnit => super::organizational_unit::schema(),
@@ -51,6 +54,10 @@ fn list_schema() -> Value {
     json!({
         "schemaVersion": SCHEMA_VERSION,
         "resources": [{
+            "name": "activity-group",
+            "cardinality": "collection",
+            "commands": ["list", "create", "update", "delete"]
+        }, {
             "name": "benchmark",
             "cardinality": "singleton",
             "commands": ["read", "create", "update"]
@@ -74,6 +81,11 @@ mod tests {
     fn list_schema_advertises_available_resources() {
         let schema = list_schema();
         let resources = schema["resources"].as_array().expect("resources array");
+        assert!(
+            resources
+                .iter()
+                .any(|resource| resource["name"] == "activity-group")
+        );
         assert!(
             resources
                 .iter()

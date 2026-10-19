@@ -24,6 +24,7 @@ const COMPANY_ID: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_00
 const IDENTITY_PATH: &str = "/api/auth/v2/machine/identity";
 const COMPANIES_PATH: &str = "/api/accounts/v1/companies";
 const BENCHMARKS_PATH: &str = "/api/benchmarks/v1/benchmarks";
+const ACTIVITY_GROUPS_PATH: &str = "/api/activities/v1/activity-groups";
 const REPORTING_PERIODS_PATH: &str = "/api/reporting-periods/v1/reporting-periods";
 const ORGANIZATIONAL_UNITS_PATH: &str = "/api/organizational-units/v1/organizational-units";
 
@@ -484,6 +485,78 @@ async fn reporting_period_create_serializes_input_and_returns_the_created_period
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&terminal.stdout()).expect("stdout is JSON")["id"],
         reporting_period_id.to_string()
+    );
+}
+
+#[tokio::test]
+async fn activity_group_create_serializes_input_and_returns_the_created_group() {
+    let server = mock_server().await;
+    let activity_group_id = Uuid::from_u128(10);
+    Mock::given(method("POST"))
+        .and(path(ACTIVITY_GROUPS_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": activity_group_id,
+            "position": 0,
+            "name": "Scope 1",
+            "description": "Direct emissions"
+        })))
+        .mount(&server)
+        .await;
+    let directory = tempfile::tempdir().expect("temporary input directory");
+    let input_path = directory.path().join("activity-group.json");
+    std::fs::write(
+        &input_path,
+        serde_json::to_vec(&serde_json::json!({
+            "position": 0,
+            "name": "Scope 1",
+            "description": "Direct emissions"
+        }))
+        .expect("serializable activity-group input"),
+    )
+    .expect("activity-group input written");
+    let input_path = input_path.to_str().expect("UTF-8 temporary path");
+    let terminal = FakeTerminal::default();
+
+    run_cli(
+        &[
+            "cad-cli",
+            "--server-url",
+            &server.uri(),
+            "--allow-insecure-http",
+            "--output",
+            "json",
+            "activity-group",
+            "create",
+            "--input",
+            input_path,
+        ],
+        &credentials(),
+        &terminal,
+    )
+    .await
+    .expect("activity-group creation should succeed");
+
+    assert_eq!(
+        request_paths(&server).await,
+        [
+            format!("GET {IDENTITY_PATH}"),
+            format!("POST {ACTIVITY_GROUPS_PATH}")
+        ]
+    );
+    let requests = server
+        .received_requests()
+        .await
+        .expect("mock server records requests");
+    let post = requests
+        .iter()
+        .find(|request| request.url.path() == ACTIVITY_GROUPS_PATH)
+        .expect("activity-group create request");
+    let body: serde_json::Value = serde_json::from_slice(&post.body).expect("create body is JSON");
+    assert_eq!(body["name"], "Scope 1");
+    assert!(body.get("id").is_none());
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&terminal.stdout()).expect("stdout is JSON")["id"],
+        activity_group_id.to_string()
     );
 }
 
