@@ -13,13 +13,15 @@ pub mod inventory_lines;
 pub mod reporting_periods;
 pub mod reports;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// The common response returned by CAD delete endpoints.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteResult<Id> {
     /// Identifier of the deleted resource.
+    #[schemars(with = "String")]
     pub id: Id,
     /// Localized message returned by the service.
     pub msg: String,

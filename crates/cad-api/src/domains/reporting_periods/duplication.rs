@@ -1,12 +1,13 @@
 use chrono::{DateTime, Utc};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{DuplicationStatusId, ReportingPeriodId};
 
-use super::input::ReportingPeriodCreate;
+use super::ReportingPeriodCreate;
 
 /// Optional data copied as part of a reporting-period duplication.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DuplicationOptions {
     /// Copy inventory entries.
@@ -18,10 +19,11 @@ pub struct DuplicationOptions {
 }
 
 /// Input for starting a reporting-period duplication.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ReportingPeriodDuplicate {
     /// Source reporting period.
+    #[schemars(with = "String")]
     pub duplicated_reporting_period_id: ReportingPeriodId,
     /// New reporting-period data.
     #[serde(flatten)]
@@ -48,7 +50,7 @@ impl ReportingPeriodDuplicate {
 }
 
 /// State of the reporting-period background duplication task.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum DuplicationTaskStatus {
     /// The task is still running.
@@ -60,14 +62,17 @@ pub enum DuplicationTaskStatus {
 }
 
 /// Progress returned by the duplication endpoint.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DuplicationStatus {
     /// Duplication-job identifier used for polling.
+    #[schemars(with = "String")]
     pub id: DuplicationStatusId,
     /// Source reporting period.
+    #[schemars(with = "String")]
     pub orig_reporting_period_id: ReportingPeriodId,
     /// Newly created period, once available.
+    #[schemars(with = "Option<String>")]
     pub new_reporting_period_id: Option<ReportingPeriodId>,
     /// Total inventory lines scheduled for copying.
     pub count_measurements_total: u64,

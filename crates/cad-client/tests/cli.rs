@@ -99,6 +99,20 @@ fn generated_artefacts_need_no_credentials_or_server() {
     let schema: serde_json::Value = serde_json::from_slice(&output).expect("schema output is JSON");
     assert_eq!(schema["resource"], "benchmark");
     assert_eq!(schema["serverManagedFields"], serde_json::json!(["id"]));
+
+    let output = cad_cli()
+        .args(["schema", "reporting-period"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let schema: serde_json::Value = serde_json::from_slice(&output).expect("schema output is JSON");
+    assert_eq!(schema["resource"], "reporting-period");
+    assert_eq!(
+        schema["commands"]["create"]["inputTransport"]["argument"],
+        "--input"
+    );
 }
 
 #[test]

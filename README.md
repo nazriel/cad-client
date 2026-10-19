@@ -178,6 +178,44 @@ are case-sensitive; inspect `cad-cli schema benchmark` for the complete
 example, `"C"` and `"DENMARK"` are valid. `sectorGroup` appears only in
 responses.
 
+## Reporting periods
+
+Reporting periods are a collection. Inspect the credential-free CLI contract
+before automating writes:
+
+```console
+cad-cli reporting-period --help
+cad-cli reporting-period create --help
+cad-cli schema reporting-period > reporting-period-cli-schema.json
+```
+
+List periods or read one period as JSON:
+
+```console
+cad-cli --output json reporting-period list
+cad-cli --output json reporting-period get 00000000-0000-0000-0000-000000000001
+```
+
+Create a period from a JSON file or stdin. `update` takes the reporting-period
+UUID as its first argument and receives the same ID-free JSON object; the CLI
+puts that UUID into the API request body where the platform requires it.
+
+```console
+cad-cli --output json reporting-period create --input reporting-period.json
+printf '%s' '{"description":"Financial year 2026","shortName":"FY26","startDate":"2026-01-01","endDate":"2026-12-31","isLocked":false}' | \
+  cad-cli --output json reporting-period create --input -
+cad-cli --output json reporting-period update 00000000-0000-0000-0000-000000000001 --input reporting-period.json
+```
+
+Every write requires `description`, `shortName`, `startDate`, `endDate`, and
+`isLocked`. Dates use ISO 8601 `YYYY-MM-DD` and are inclusive; `shortName` is
+at most six characters; `startDate` cannot be later than `endDate`. The server
+assigns `id`, so it must not be supplied in input. Use `details` for aggregate
+measurement/emissions data. `duplicate --input request.json [--wait]` starts a
+copy job; its input extends the create object with `duplicatedReportingPeriodId`
+and the required booleans `duplicateEntries`, `duplicateNotes`, and
+`duplicateAttachments`. Poll an existing job with `duplication-status <id>`.
+
 ## Shell completions and manual page
 
 Both are generated from the command definition itself, so they never drift from

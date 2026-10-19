@@ -26,6 +26,8 @@ enum Command {
     List,
     /// Print the CLI schema for the singleton company benchmark.
     Benchmark,
+    /// Print the CLI schema for company reporting periods.
+    ReportingPeriod,
 }
 
 impl Group {
@@ -33,6 +35,7 @@ impl Group {
         let document = match self.command {
             Command::List => list_schema(),
             Command::Benchmark => super::benchmark::schema(),
+            Command::ReportingPeriod => super::reporting_period::schema(),
         };
         let mut bytes = serde_json::to_vec_pretty(&document)
             .map_err(|error| CliError::Input(format!("could not render CLI schema: {error}")))?;
@@ -48,6 +51,10 @@ fn list_schema() -> Value {
             "name": "benchmark",
             "cardinality": "singleton",
             "commands": ["read", "create", "update"]
+        }, {
+            "name": "reporting-period",
+            "cardinality": "collection",
+            "commands": ["list", "get", "details", "create", "update", "delete", "duplicate", "duplication-status"]
         }]
     })
 }
@@ -57,10 +64,18 @@ mod tests {
     use super::list_schema;
 
     #[test]
-    fn list_schema_advertises_benchmark() {
-        assert_eq!(
-            list_schema()["resources"][0]["name"],
-            serde_json::json!("benchmark")
+    fn list_schema_advertises_available_resources() {
+        let schema = list_schema();
+        let resources = schema["resources"].as_array().expect("resources array");
+        assert!(
+            resources
+                .iter()
+                .any(|resource| resource["name"] == "benchmark")
+        );
+        assert!(
+            resources
+                .iter()
+                .any(|resource| resource["name"] == "reporting-period")
         );
     }
 }

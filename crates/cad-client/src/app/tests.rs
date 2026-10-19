@@ -24,6 +24,7 @@ const COMPANY_ID: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_00
 const IDENTITY_PATH: &str = "/api/auth/v2/machine/identity";
 const COMPANIES_PATH: &str = "/api/accounts/v1/companies";
 const BENCHMARKS_PATH: &str = "/api/benchmarks/v1/benchmarks";
+const REPORTING_PERIODS_PATH: &str = "/api/reporting-periods/v1/reporting-periods";
 
 #[derive(Default)]
 struct FakeEnvironment(HashMap<String, String>);
@@ -406,6 +407,82 @@ async fn benchmark_update_uses_the_singleton_id_in_its_url_and_body() {
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&terminal.stdout()).expect("stdout is JSON")["id"],
         benchmark_id.to_string()
+    );
+}
+
+#[tokio::test]
+async fn reporting_period_create_serializes_input_and_returns_the_created_period() {
+    let server = mock_server().await;
+    let reporting_period_id = Uuid::from_u128(9);
+    Mock::given(method("POST"))
+        .and(path(REPORTING_PERIODS_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": reporting_period_id,
+            "description": "Financial year 2026",
+            "shortName": "FY26",
+            "startDate": "2026-01-01",
+            "endDate": "2026-12-31",
+            "isLocked": false
+        })))
+        .mount(&server)
+        .await;
+    let directory = tempfile::tempdir().expect("temporary input directory");
+    let input_path = directory.path().join("reporting-period.json");
+    std::fs::write(
+        &input_path,
+        serde_json::to_vec(&serde_json::json!({
+            "description": "Financial year 2026",
+            "shortName": "FY26",
+            "startDate": "2026-01-01",
+            "endDate": "2026-12-31",
+            "isLocked": false
+        }))
+        .expect("serializable reporting-period input"),
+    )
+    .expect("reporting-period input written");
+    let input_path = input_path.to_str().expect("UTF-8 temporary path");
+    let terminal = FakeTerminal::default();
+
+    run_cli(
+        &[
+            "cad-cli",
+            "--server-url",
+            &server.uri(),
+            "--allow-insecure-http",
+            "--output",
+            "json",
+            "reporting-period",
+            "create",
+            "--input",
+            input_path,
+        ],
+        &credentials(),
+        &terminal,
+    )
+    .await
+    .expect("reporting-period creation should succeed");
+
+    assert_eq!(
+        request_paths(&server).await,
+        [
+            format!("GET {IDENTITY_PATH}"),
+            format!("POST {REPORTING_PERIODS_PATH}")
+        ]
+    );
+    let requests = server
+        .received_requests()
+        .await
+        .expect("mock server records requests");
+    let post = requests
+        .iter()
+        .find(|request| request.url.path() == REPORTING_PERIODS_PATH)
+        .expect("reporting-period create request");
+    let body: serde_json::Value = serde_json::from_slice(&post.body).expect("create body is JSON");
+    assert_eq!(body["shortName"], "FY26");
+    assert!(body.get("id").is_none());
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&terminal.stdout()).expect("stdout is JSON")["id"],
+        reporting_period_id.to_string()
     );
 }
 
