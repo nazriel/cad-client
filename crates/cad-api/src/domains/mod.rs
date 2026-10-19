@@ -5,6 +5,7 @@
 //! company selection in the type system while the individual handles keep the
 //! HTTP details local to their domain.
 
+pub mod activity_categories;
 pub mod activity_groups;
 pub mod benchmarks;
 pub mod custom_fields;

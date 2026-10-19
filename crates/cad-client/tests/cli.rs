@@ -62,6 +62,7 @@ async fn run(command: Command) -> assert_cmd::assert::Assert {
 fn help_lists_every_command_group_and_exits_zero() {
     let assert = cad_cli().arg("--help").assert().success();
     let stdout = predicate::str::contains("company")
+        .and(predicate::str::contains("activity-category"))
         .and(predicate::str::contains("activity-group"))
         .and(predicate::str::contains("reporting-period"))
         .and(predicate::str::contains("inventory-line"))
@@ -90,6 +91,20 @@ fn generated_artefacts_need_no_credentials_or_server() {
         .assert()
         .success()
         .stdout(predicate::str::starts_with(".ie \\n(.g"));
+
+    let output = cad_cli()
+        .args(["schema", "activity-category"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let schema: serde_json::Value = serde_json::from_slice(&output).expect("schema output is JSON");
+    assert_eq!(schema["resource"], "activity-category");
+    assert_eq!(
+        schema["commands"]["update"]["input"]["properties"]["activityCategoryType"]["$ref"],
+        "#/$defs/ActivityCategoryType"
+    );
 
     let output = cad_cli()
         .args(["schema", "activity-group"])
