@@ -239,7 +239,7 @@ mod tests {
         assert_eq!(create_input["$ref"], "#/$defs/ReportingPeriodInput");
         let create_definition = &schema["$defs"]["ReportingPeriodInput"];
         assert!(create_definition["properties"].get("id").is_none());
-        assert!(create_definition["additionalProperties"] == false);
+        assert_eq!(create_definition["additionalProperties"], false);
         assert_eq!(
             schema["commands"]["update"]["inputTransport"]["argument"],
             "--input"

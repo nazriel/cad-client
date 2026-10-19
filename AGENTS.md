@@ -12,11 +12,11 @@ Read [`docs/architecture.md`](docs/architecture.md) before changing application 
 
 ## File placement
 
-- Add a small, self-contained SDK domain at `crates/cad-api/src/domains/<plural>.rs`; use `domains/<plural>/mod.rs` once it needs helper modules or focused tests. Register it in `domains/mod.rs`.
-- Keep a domain's private request recipes beside its handle. Keep the scoped `Client` accessor in the domain entry module; extract typed public models only into a descriptive, domain-named helper module when it represents a real boundary (for example `reporting_period.rs` or `duplication.rs`), never generic `models.rs`, `input.rs`, `api.rs`, or `requests.rs`. Put resource IDs in `cad-api/src/ids.rs`.
-- Add a simple CLI group at `crates/cad-client/src/cmds/<singular>.rs`; promote it to `cmds/<singular>/mod.rs` only when it has command-specific helpers, workflow modules, or focused tests. Register every group and its online/offline dispatch in `cmds/mod.rs`.
-- Keep an offline schema builder with the domain command module (for example `cmds/benchmark.rs`). `cmds/schema.rs` is only the registry and renderer; it must not own another domain's fields or types.
-- Keep unit/request tests next to the module they exercise. Put application dispatch fixtures in `src/app/tests.rs` and compiled-binary behavior in `crates/cad-client/tests/`.
+- Add new or materially changed SDK domains at `crates/cad-api/src/domains/<plural>/mod.rs`, with request/model tests in the sibling `tests.rs`. Register the domain in `domains/mod.rs`.
+- Keep a domain's private request recipes beside its handle. Keep the scoped `Client` accessor in `mod.rs`; extract typed public models only into a descriptive, domain-named helper module when it represents a real boundary (for example `reporting_period.rs` or `duplication.rs`), never generic `models.rs`, `input.rs`, `api.rs`, or `requests.rs`. Put resource IDs in `cad-api/src/ids.rs`.
+- Add new or materially changed CLI groups at `crates/cad-client/src/cmds/<singular>/mod.rs`, with command/schema tests in sibling `tests.rs`. Register every group and its online/offline dispatch in `cmds/mod.rs`.
+- Keep an offline schema builder with the domain command module (for example `cmds/benchmark/mod.rs`). `cmds/schema.rs` is only the registry and renderer; it must not own another domain's fields or types.
+- Keep SDK and command unit tests in their domain or command directory's `tests.rs`. Put application dispatch fixtures in `src/app/tests.rs` and compiled-binary behavior in `crates/cad-client/tests/`.
 
 ## Change discipline
 
@@ -24,3 +24,4 @@ Read [`docs/architecture.md`](docs/architecture.md) before changing application 
 - Use typed `serde` models and `schemars::JsonSchema` for externally supplied or returned JSON. Generate `cad-cli schema <domain>` from the exact CLI input/output types and add metadata only for behavior types cannot express.
 - Do not add conventional CRUD commands that the API does not support. For singleton resources, expose `read`, `create`, and/or `update` as appropriate and hide collection wrappers and server-owned IDs.
 - Validate focused tests first, then run `./scripts/check.sh` for cross-cutting changes.
+- Before every commit, run the local quality gateway: `mise run lint`.

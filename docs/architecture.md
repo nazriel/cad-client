@@ -58,36 +58,16 @@ exceptions. Presigned object-storage transfer URLs are outside this rule.
 
 ## Domain module layout
 
-Domains are plural because they represent API capabilities. Use the smallest
-layout that preserves coherent ownership.
-
-### One focused module
-
-Use a file when a domain has one public model/handle and private request recipes
-fit comfortably together:
+Domains are plural because they represent API capabilities. New or materially
+changed domains use a directory module, even when the initial implementation is
+small. Existing one-file domains may remain as legacy layout until they next need
+substantial work.
 
 ```text
-crates/cad-api/src/domains/
-├── custom_fields.rs
-└── reports.rs
-```
+crates/cad-api/src/domains/activity_groups/
+├── mod.rs                 # public API, handle, route constants, private request recipes
+└── tests.rs               # request, JSON-casing, and semantic tests
 
-```text
-<domain>.rs
-├── public wire models and inputs
-├── private `requests` module
-├── public scoped handle
-├── `impl Client<CompanyScoped>` accessor
-└── colocated `#[cfg(test)]` tests when short
-```
-
-### Domain directory
-
-Promote the file to a directory when it needs a meaningful internal boundary:
-multiple focused model modules, specialized code/enums, or request/model tests
-large enough to obscure the handle.
-
-```text
 crates/cad-api/src/domains/reporting_periods/
 ├── mod.rs                 # public API, handle, route constants, private request recipes
 ├── reporting_period.rs    # reporting-period models, inputs, and validation
@@ -96,7 +76,9 @@ crates/cad-api/src/domains/reporting_periods/
 ```
 
 `mod.rs` remains the public entry point and owns the scoped handle, route
-constants, and private request recipes. Extract a helper only for a meaningful,
+constants, and private request recipes. Every directory domain keeps focused
+SDK contract tests in a sibling `tests.rs`, declared from `mod.rs` with
+`#[cfg(test)] mod tests;`. Extract a helper only for a meaningful,
 domain-named boundary—such as `reporting_period.rs` for one resource's models
 and validation or `duplication.rs` for an asynchronous capability. Avoid
 generic `models.rs`, `input.rs`, `api.rs`, or `requests.rs` splits; private
@@ -112,17 +94,20 @@ domain is plural:
 
 ```text
 crates/cad-client/src/cmds/
-├── benchmark.rs
-├── custom_field.rs
+├── activity_group/
+│   ├── mod.rs             # command group and domain-owned schema builder
+│   └── tests.rs           # schema and command-local tests
 ├── reporting_period/
 │   ├── mod.rs
 │   └── ... workflow-specific modules
 └── schema.rs
 ```
 
-Use one `<resource>.rs` file for a direct Clap-to-SDK command group. Promote it
-to `<resource>/mod.rs` only for command-specific workflows, helpers, adapters,
-or focused tests. Do not create directories preemptively.
+New or materially changed command groups use `<resource>/mod.rs` with a
+sibling `tests.rs`, declared from `mod.rs` with `#[cfg(test)] mod tests;`.
+Existing one-file command groups may remain until they next need substantial
+work. Add descriptive helper modules only for command-specific workflows,
+adapters, or other meaningful boundaries; do not create generic helper files.
 
 Each command group owns:
 
@@ -187,7 +172,7 @@ Use the narrowest test layer that proves the contract:
 | SDK request method, normalized path, body, model JSON | `cad-api` domain module or its `tests.rs` |
 | Command parsing and dispatch with a mock server       | `crates/cad-client/src/app/tests.rs`      |
 | Shipped binary behavior and stdout/stderr boundary    | `crates/cad-client/tests/`                |
-| Domain schema structure and CLI adaptations           | owning command module's tests             |
+| Domain schema structure and CLI adaptations           | owning command directory's `tests.rs`     |
 
 New domains require request-recipe/model tests and a CLI integration test. Test
 singleton adaptation explicitly when the service returns an array. A schema
