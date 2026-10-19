@@ -8,7 +8,7 @@ fn schema_describes_id_safe_inputs_and_enum_definitions() {
     assert!(schema["commands"].get("create").is_none());
     let update_input = &schema["commands"]["update"]["input"];
     assert!(update_input["properties"].get("id").is_none());
-    assert_eq!(update_input["additionalProperties"], false);
+    assert!(update_input["additionalProperties"] == false);
     assert_eq!(update_input["properties"]["name"]["maxLength"], 128);
     assert_eq!(
         schema["$defs"]["ActivityCategoryType"]["enum"][4],

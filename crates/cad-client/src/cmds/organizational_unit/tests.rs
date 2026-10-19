@@ -7,7 +7,7 @@ fn schema_describes_id_safe_inputs_and_all_operations() {
     assert_eq!(schema["resource"], "organizational-unit");
     let create_input = &schema["commands"]["create"]["input"];
     assert!(create_input["properties"].get("id").is_none());
-    assert_eq!(create_input["additionalProperties"], false);
+    assert!(create_input["additionalProperties"] == false);
     assert_eq!(
         schema["commands"]["update"]["input"]["properties"]["parentId"]["type"],
         "string"
