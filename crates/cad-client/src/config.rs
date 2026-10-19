@@ -2,7 +2,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use cad_api::{
-    ApiKeyV1Credentials, Environment as ServerEnvironment, ServerConfig, ids::CompanyId,
+    ApiKeyV2Credentials, Environment as ServerEnvironment, ServerConfig, ids::CompanyId,
 };
 use uuid::Uuid;
 
@@ -37,7 +37,7 @@ enum ServerSource {
 /// API secret.
 pub struct AppConfig {
     server: ServerConfig,
-    credentials: ApiKeyV1Credentials,
+    credentials: ApiKeyV2Credentials,
     company_id: Option<CompanyId>,
 }
 
@@ -73,13 +73,13 @@ impl AppConfig {
 
         Ok(Self {
             server,
-            credentials: ApiKeyV1Credentials::new(api_key, api_secret),
+            credentials: ApiKeyV2Credentials::new(api_key, api_secret),
             company_id,
         })
     }
 
     /// Splits the configuration into the values the bootstrap actually needs.
-    pub(crate) fn into_parts(self) -> (ServerConfig, ApiKeyV1Credentials, Option<CompanyId>) {
+    pub(crate) fn into_parts(self) -> (ServerConfig, ApiKeyV2Credentials, Option<CompanyId>) {
         (self.server, self.credentials, self.company_id)
     }
 }

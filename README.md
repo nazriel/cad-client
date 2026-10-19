@@ -66,8 +66,8 @@ always a clean capture. In a terminal the table is drawn with frames and the
 status line is coloured; piped anywhere else the same table is plain ASCII with
 no escape sequences, and `NO_COLOR=1` turns colour off everywhere.
 
-Set `CAD_DEBUG_HTTP=1` to print each platform request method, URL, and selected
-company ID to stderr.
+Set `RUST_LOG=cad_api=debug` to print each platform request method, URL, and
+selected company ID to stderr.
 Authorization headers, request bodies, and URL query strings are never logged.
 All platform API paths, including machine identity, are rooted at `/api/`.
 

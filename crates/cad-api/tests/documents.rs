@@ -9,7 +9,7 @@ mod support;
 
 use cad_api::domains::documents::DocumentUploadRequest;
 use cad_api::ids::CompanyId;
-use cad_api::{ApiKeyV1Credentials, Client, CompanyScoped, ServerConfig};
+use cad_api::{ApiKeyV2Credentials, Client, CompanyScoped, ServerConfig};
 use std::io::Write as _;
 use uuid::Uuid;
 use wiremock::matchers::{method, path};
@@ -39,7 +39,7 @@ async fn connect(server: &MockServer, company_id: CompanyId) -> Client<CompanySc
 
     Client::new(ServerConfig::insecure_loopback(server.uri()).expect("loopback HTTP"))
         .expect("valid loopback configuration")
-        .connect(ApiKeyV1Credentials::new(Uuid::new_v4(), "secret"))
+        .connect(ApiKeyV2Credentials::new(Uuid::new_v4(), "secret"))
         .await
         .expect("machine identity succeeds")
         .scope_current_company()

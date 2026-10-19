@@ -20,7 +20,7 @@ mod protocol;
 mod transport;
 
 pub use auth::{
-    ApiKeyV1Credentials, Company, CompanySelectionSource, MachineCompanySelection,
+    ApiKeyV2Credentials, Company, CompanySelectionSource, MachineCompanySelection,
     MachinePrincipal, SessionContext,
 };
 pub use client::{Client, CompanyScoped, Connected, Disconnected};

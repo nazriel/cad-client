@@ -3,7 +3,7 @@
 mod support;
 
 use cad_api::ids::CompanyId;
-use cad_api::{ApiKeyV1Credentials, Client, ServerConfig};
+use cad_api::{ApiKeyV2Credentials, Client, ServerConfig};
 use uuid::Uuid;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -50,7 +50,7 @@ async fn machine_key_authenticates_identity_and_resource_requests() {
 
     let connected = Client::new(config(&server))
         .expect("valid loopback configuration")
-        .connect(ApiKeyV1Credentials::new(api_key, "secret-value"))
+        .connect(ApiKeyV2Credentials::new(api_key, "secret-value"))
         .await
         .expect("machine identity succeeds");
     connected
@@ -92,7 +92,7 @@ async fn company_scope_uses_header_and_validates_resolution() {
 
     let connected = Client::new(config(&server))
         .expect("valid loopback configuration")
-        .connect(ApiKeyV1Credentials::new(Uuid::new_v4(), "secret"))
+        .connect(ApiKeyV2Credentials::new(Uuid::new_v4(), "secret"))
         .await
         .expect("machine identity succeeds");
     let scoped = connected

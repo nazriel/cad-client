@@ -18,6 +18,7 @@ serde_json.workspace = true
 strum.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util", "sync", "time"] }
+tracing.workspace = true
 url.workspace = true
 uuid.workspace = true
 

@@ -1,7 +1,7 @@
 use std::{fmt, sync::Arc};
 
 use crate::{
-    ApiKeyV1Credentials, Company, Error, Result, ServerConfig, SessionContext, ids::CompanyId,
+    ApiKeyV2Credentials, Company, Error, Result, ServerConfig, SessionContext, ids::CompanyId,
     protocol::companies, transport::Transport,
 };
 
@@ -157,7 +157,7 @@ impl Client<Disconnected> {
     ///
     /// Returns an authentication, transport, or protocol error when the identity
     /// request fails or the server returns an invalid response.
-    pub async fn connect(self, credentials: ApiKeyV1Credentials) -> Result<Client<Connected>> {
+    pub async fn connect(self, credentials: ApiKeyV2Credentials) -> Result<Client<Connected>> {
         let transport = self.state.transport;
         let context = transport.identity(&credentials).await?;
         Ok(Client {

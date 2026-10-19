@@ -8,12 +8,12 @@ use uuid::Uuid;
 use crate::ids::CompanyId;
 
 /// Credentials accepted by the machine API-key authentication scheme.
-pub struct ApiKeyV1Credentials {
+pub struct ApiKeyV2Credentials {
     api_key: Uuid,
     secret: SecretString,
 }
 
-impl ApiKeyV1Credentials {
+impl ApiKeyV2Credentials {
     #[must_use]
     pub fn new(api_key: Uuid, secret: impl Into<String>) -> Self {
         Self {
@@ -32,10 +32,10 @@ impl ApiKeyV1Credentials {
     }
 }
 
-impl fmt::Debug for ApiKeyV1Credentials {
+impl fmt::Debug for ApiKeyV2Credentials {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("ApiKeyV1Credentials")
+            .debug_struct("ApiKeyV2Credentials")
             .field("api_key", &"[REDACTED]")
             .field("secret", &"[REDACTED]")
             .finish()
@@ -100,7 +100,7 @@ mod tests {
 
     #[test]
     fn credentials_never_debug_their_values() {
-        let credentials = ApiKeyV1Credentials::new(Uuid::nil(), "very-secret");
+        let credentials = ApiKeyV2Credentials::new(Uuid::nil(), "very-secret");
         let debug = format!("{credentials:?}");
         assert!(!debug.contains("very-secret"));
         assert!(!debug.contains(&Uuid::nil().to_string()));
@@ -108,7 +108,7 @@ mod tests {
 
     #[test]
     fn bearer_token_joins_key_and_secret() {
-        let credentials = ApiKeyV1Credentials::new(Uuid::nil(), "very-secret");
+        let credentials = ApiKeyV2Credentials::new(Uuid::nil(), "very-secret");
         assert_eq!(
             credentials.bearer_token(),
             format!("{}.very-secret", Uuid::nil())

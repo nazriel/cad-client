@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Duration};
 use reqwest::redirect::Policy;
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::{ApiKeyV1Credentials, Error, Result, ServerConfig, SessionContext, ids::CompanyId};
+use crate::{ApiKeyV2Credentials, Error, Result, ServerConfig, SessionContext, ids::CompanyId};
 use crate::{
     config::{STORAGE_STALL_TIMEOUT, storage_redirect_policy},
     protocol::{RequestSpec, decode_json_bytes, machine_identity},
@@ -46,31 +46,43 @@ impl Transport {
 
     pub(crate) async fn identity(
         &self,
-        credentials: &ApiKeyV1Credentials,
+        credentials: &ApiKeyV2Credentials,
     ) -> Result<SessionContext> {
         let response = self
             .request_from_spec(machine_identity(), credentials, None)?
             .send()
             .await
             .map_err(Error::transport)?;
-        let context = decode_json_response(response)
+        let context: SessionContext = decode_json_response(response)
             .await
             .map_err(Error::classify_auth)?;
-        log_resolved_company(&context);
+        tracing::debug!(
+            resolved_company_id = ?context.company_selection.resolved_company_id,
+            company_selection_source = ?context.company_selection.source,
+            "resolved machine company selection"
+        );
         Ok(context)
     }
 
     fn request_from_spec<B, T>(
         &self,
         request: RequestSpec<B, T>,
-        credentials: &ApiKeyV1Credentials,
+        credentials: &ApiKeyV2Credentials,
         company_id: Option<CompanyId>,
     ) -> Result<reqwest::RequestBuilder>
     where
         B: Serialize,
     {
         let url = self.config.endpoint(&request.path)?;
-        log_request(&request.method, &url, company_id);
+        let mut safe_url = url.clone();
+        safe_url.set_query(None);
+        safe_url.set_fragment(None);
+        tracing::debug!(
+            method = %request.method,
+            url = %safe_url,
+            company_id = ?company_id,
+            "sending API request"
+        );
         let mut builder = self
             .api
             .request(request.method, url)
@@ -88,38 +100,10 @@ impl Transport {
     }
 }
 
-fn log_request(method: &reqwest::Method, url: &url::Url, company_id: Option<CompanyId>) {
-    if std::env::var_os("CAD_DEBUG_HTTP").is_some() {
-        let mut safe_url = url.clone();
-        safe_url.set_query(None);
-        safe_url.set_fragment(None);
-        if let Some(company_id) = company_id {
-            eprintln!("cad-cli HTTP {method} {safe_url} X-CAD-Company-Id: {company_id}");
-        } else {
-            eprintln!("cad-cli HTTP {method} {safe_url}");
-        }
-    }
-}
-
-fn log_resolved_company(context: &SessionContext) {
-    if std::env::var_os("CAD_DEBUG_HTTP").is_some() {
-        let selection = &context.company_selection;
-        eprintln!(
-            "cad-cli resolved company: {} (source: {:?})",
-            selection
-                .resolved_company_id
-                .map(|company_id| company_id.to_string())
-                .as_deref()
-                .unwrap_or("none"),
-            selection.source
-        );
-    }
-}
-
 #[derive(Clone)]
 pub(crate) struct ClientCore {
     transport: Arc<Transport>,
-    credentials: Arc<ApiKeyV1Credentials>,
+    credentials: Arc<ApiKeyV2Credentials>,
     company_id: Option<CompanyId>,
     context: SessionContext,
 }
@@ -127,7 +111,7 @@ pub(crate) struct ClientCore {
 impl ClientCore {
     pub(crate) fn new(
         transport: Arc<Transport>,
-        credentials: ApiKeyV1Credentials,
+        credentials: ApiKeyV2Credentials,
         company_id: Option<CompanyId>,
         context: SessionContext,
     ) -> Self {
