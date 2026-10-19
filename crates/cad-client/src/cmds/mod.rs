@@ -1,5 +1,6 @@
 //! Command groups exposed by the CLI.
 
+pub mod activity_category;
 pub mod activity_group;
 pub mod benchmark;
 pub mod company;
@@ -25,6 +26,8 @@ use crate::support::terminal::Terminal;
 /// Top-level `cad-cli` command.
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Manage the company's activity categories.
+    ActivityCategory(activity_category::Group),
     /// Manage the company's activity groups.
     ActivityGroup(activity_group::Group),
     /// Read and update the company benchmark.
@@ -58,6 +61,9 @@ pub enum Command {
 impl Command {
     pub(crate) fn into_invocation(self) -> Invocation {
         match self {
+            Self::ActivityCategory(group) => {
+                Invocation::Online(OnlineCommand::ActivityCategory(group))
+            }
             Self::ActivityGroup(group) => Invocation::Online(OnlineCommand::ActivityGroup(group)),
             Self::Benchmark(group) => Invocation::Online(OnlineCommand::Benchmark(group)),
             Self::Context(group) => Invocation::Online(OnlineCommand::Context(group)),
@@ -117,6 +123,7 @@ impl OfflineCommand {
 /// client or an `SdkAdapter` cannot be run without scoping, because scoping is
 /// the only way to obtain either.
 pub(crate) enum OnlineCommand {
+    ActivityCategory(activity_category::Group),
     ActivityGroup(activity_group::Group),
     Benchmark(benchmark::Group),
     Context(context::Group),
@@ -137,6 +144,9 @@ impl OnlineCommand {
         platform: &Platform,
     ) -> Result<Value, CliError> {
         match self {
+            Self::ActivityCategory(group) => {
+                group.run(context, platform.scoped().await?.client()).await
+            }
             Self::ActivityGroup(group) => {
                 group.run(context, platform.scoped().await?.client()).await
             }
