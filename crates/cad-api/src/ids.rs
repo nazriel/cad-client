@@ -82,6 +82,7 @@ identifier!(DocumentId, "A document identifier.");
 identifier!(CustomFieldId, "A custom-field identifier.");
 identifier!(CustomOptionId, "A custom-option identifier.");
 identifier!(ReportId, "A report identifier.");
+identifier!(BenchmarkId, "A benchmark identifier.");
 identifier!(
     OrganizationalUnitId,
     "An organizational-unit identifier used when creating reports."

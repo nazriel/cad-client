@@ -23,6 +23,7 @@ use crate::support::terminal::{Progress, StatusKind, Terminal};
 const COMPANY_ID: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0042);
 const IDENTITY_PATH: &str = "/api/auth/v2/machine/identity";
 const COMPANIES_PATH: &str = "/api/accounts/v1/companies";
+const BENCHMARKS_PATH: &str = "/api/benchmarks/v1/benchmarks";
 
 #[derive(Default)]
 struct FakeEnvironment(HashMap<String, String>);
@@ -245,6 +246,166 @@ async fn company_list_renders_the_server_payload_as_json() {
     assert_eq!(
         terminal.statuses(),
         [(StatusKind::Success, "1 result".to_owned())]
+    );
+}
+
+#[tokio::test]
+async fn benchmark_read_hides_the_singleton_collection_wrapper() {
+    let server = mock_server().await;
+    let benchmark_id = Uuid::from_u128(7);
+    let reporting_period_id = Uuid::from_u128(8);
+    let revenue_unit_id = Uuid::from_u128(9);
+    Mock::given(method("GET"))
+        .and(path(BENCHMARKS_PATH))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!([{
+                "id": benchmark_id,
+                "reportingPeriodId": reporting_period_id,
+                "fullTimeEmployees": 42.0,
+                "grossAnnualRevenue": null,
+                "grossAnnualRevenueUnitId": revenue_unit_id,
+                "highLevelSectorCode": "C",
+                "lowLevelSectorCode": null,
+                "location": "DENMARK",
+                "sectorGroup": "INDUSTRY"
+            }])),
+        )
+        .mount(&server)
+        .await;
+    let terminal = FakeTerminal::default();
+
+    run_cli(
+        &[
+            "cad-cli",
+            "--server-url",
+            &server.uri(),
+            "--allow-insecure-http",
+            "--output",
+            "json",
+            "benchmark",
+            "read",
+        ],
+        &credentials(),
+        &terminal,
+    )
+    .await
+    .expect("benchmark read should succeed");
+
+    let rendered: serde_json::Value =
+        serde_json::from_str(&terminal.stdout()).expect("stdout is JSON");
+    assert!(rendered.is_object(), "the CLI must not emit the API array");
+    assert_eq!(rendered["id"], benchmark_id.to_string());
+    assert_eq!(
+        request_paths(&server).await,
+        [
+            format!("GET {IDENTITY_PATH}"),
+            format!("GET {BENCHMARKS_PATH}")
+        ]
+    );
+    assert_eq!(
+        terminal.statuses(),
+        [(StatusKind::Success, "1 result".to_owned())]
+    );
+}
+
+#[tokio::test]
+async fn benchmark_update_uses_the_singleton_id_in_its_url_and_body() {
+    let server = mock_server().await;
+    let benchmark_id = Uuid::from_u128(7);
+    let reporting_period_id = Uuid::from_u128(8);
+    let revenue_unit_id = Uuid::from_u128(9);
+    let benchmark = serde_json::json!({
+        "id": benchmark_id,
+        "reportingPeriodId": reporting_period_id,
+        "fullTimeEmployees": 42.0,
+        "grossAnnualRevenue": null,
+        "grossAnnualRevenueUnitId": revenue_unit_id,
+        "highLevelSectorCode": "C",
+        "lowLevelSectorCode": null,
+        "location": "DENMARK",
+        "sectorGroup": "INDUSTRY"
+    });
+    Mock::given(method("GET"))
+        .and(path(BENCHMARKS_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([benchmark])))
+        .mount(&server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path(format!("{BENCHMARKS_PATH}/{benchmark_id}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": benchmark_id,
+            "reportingPeriodId": reporting_period_id,
+            "fullTimeEmployees": 43.0,
+            "grossAnnualRevenue": null,
+            "grossAnnualRevenueUnitId": revenue_unit_id,
+            "highLevelSectorCode": "C",
+            "lowLevelSectorCode": null,
+            "location": "DENMARK",
+            "sectorGroup": "INDUSTRY"
+        })))
+        .mount(&server)
+        .await;
+    let directory = tempfile::tempdir().expect("temporary input directory");
+    let input_path = directory.path().join("benchmark.json");
+    std::fs::write(
+        &input_path,
+        serde_json::to_vec(&serde_json::json!({
+            "reportingPeriodId": reporting_period_id,
+            "fullTimeEmployees": 43.0,
+            "grossAnnualRevenue": null,
+            "grossAnnualRevenueUnitId": revenue_unit_id,
+            "highLevelSectorCode": "C",
+            "lowLevelSectorCode": null,
+            "location": "DENMARK"
+        }))
+        .expect("serializable benchmark input"),
+    )
+    .expect("benchmark input written");
+    let input_path = input_path.to_str().expect("UTF-8 temporary path");
+    let terminal = FakeTerminal::default();
+
+    run_cli(
+        &[
+            "cad-cli",
+            "--server-url",
+            &server.uri(),
+            "--allow-insecure-http",
+            "--output",
+            "json",
+            "benchmark",
+            "update",
+            "--input",
+            input_path,
+        ],
+        &credentials(),
+        &terminal,
+    )
+    .await
+    .expect("benchmark update should succeed");
+
+    assert_eq!(
+        request_paths(&server).await,
+        [
+            format!("GET {IDENTITY_PATH}"),
+            format!("GET {BENCHMARKS_PATH}"),
+            format!("PUT {BENCHMARKS_PATH}/{benchmark_id}")
+        ]
+    );
+    let requests = server
+        .received_requests()
+        .await
+        .expect("mock server records requests");
+    let put = requests
+        .iter()
+        .find(|request| request.url.path() == format!("{BENCHMARKS_PATH}/{benchmark_id}"))
+        .expect("benchmark update request");
+    let body: serde_json::Value =
+        serde_json::from_slice(&put.body).expect("benchmark update body is JSON");
+    assert_eq!(body["id"], benchmark_id.to_string());
+    assert_eq!(body["fullTimeEmployees"], 43.0);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&terminal.stdout()).expect("stdout is JSON")["id"],
+        benchmark_id.to_string()
     );
 }
 
