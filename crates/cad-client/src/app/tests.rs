@@ -25,6 +25,7 @@ const IDENTITY_PATH: &str = "/api/auth/v2/machine/identity";
 const COMPANIES_PATH: &str = "/api/accounts/v1/companies";
 const BENCHMARKS_PATH: &str = "/api/benchmarks/v1/benchmarks";
 const REPORTING_PERIODS_PATH: &str = "/api/reporting-periods/v1/reporting-periods";
+const ORGANIZATIONAL_UNITS_PATH: &str = "/api/organizational-units/v1/organizational-units";
 
 #[derive(Default)]
 struct FakeEnvironment(HashMap<String, String>);
@@ -483,6 +484,79 @@ async fn reporting_period_create_serializes_input_and_returns_the_created_period
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&terminal.stdout()).expect("stdout is JSON")["id"],
         reporting_period_id.to_string()
+    );
+}
+
+#[tokio::test]
+async fn organizational_unit_create_serializes_input_and_returns_the_created_unit() {
+    let server = mock_server().await;
+    let parent_id = Uuid::from_u128(10);
+    let organizational_unit_id = Uuid::from_u128(11);
+    Mock::given(method("POST"))
+        .and(path(ORGANIZATIONAL_UNITS_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": organizational_unit_id,
+            "name": "Operations",
+            "position": 0,
+            "parentId": parent_id
+        })))
+        .mount(&server)
+        .await;
+    let directory = tempfile::tempdir().expect("temporary input directory");
+    let input_path = directory.path().join("organizational-unit.json");
+    std::fs::write(
+        &input_path,
+        serde_json::to_vec(&serde_json::json!({
+            "name": "Operations",
+            "position": 0,
+            "parentId": parent_id
+        }))
+        .expect("serializable organizational-unit input"),
+    )
+    .expect("organizational-unit input written");
+    let input_path = input_path.to_str().expect("UTF-8 temporary path");
+    let terminal = FakeTerminal::default();
+
+    run_cli(
+        &[
+            "cad-cli",
+            "--server-url",
+            &server.uri(),
+            "--allow-insecure-http",
+            "--output",
+            "json",
+            "organizational-unit",
+            "create",
+            "--input",
+            input_path,
+        ],
+        &credentials(),
+        &terminal,
+    )
+    .await
+    .expect("organizational-unit creation should succeed");
+
+    assert_eq!(
+        request_paths(&server).await,
+        [
+            format!("GET {IDENTITY_PATH}"),
+            format!("POST {ORGANIZATIONAL_UNITS_PATH}")
+        ]
+    );
+    let requests = server
+        .received_requests()
+        .await
+        .expect("mock server records requests");
+    let post = requests
+        .iter()
+        .find(|request| request.url.path() == ORGANIZATIONAL_UNITS_PATH)
+        .expect("organizational-unit create request");
+    let body: serde_json::Value = serde_json::from_slice(&post.body).expect("create body is JSON");
+    assert_eq!(body["parentId"], parent_id.to_string());
+    assert!(body.get("id").is_none());
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&terminal.stdout()).expect("stdout is JSON")["id"],
+        organizational_unit_id.to_string()
     );
 }
 

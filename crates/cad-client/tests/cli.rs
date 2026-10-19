@@ -64,6 +64,7 @@ fn help_lists_every_command_group_and_exits_zero() {
     let stdout = predicate::str::contains("company")
         .and(predicate::str::contains("reporting-period"))
         .and(predicate::str::contains("inventory-line"))
+        .and(predicate::str::contains("organizational-unit"))
         .and(predicate::str::contains("document"))
         .and(predicate::str::contains("custom-field"))
         .and(predicate::str::contains("custom-option"))
@@ -112,6 +113,20 @@ fn generated_artefacts_need_no_credentials_or_server() {
     assert_eq!(
         schema["commands"]["create"]["inputTransport"]["argument"],
         "--input"
+    );
+
+    let output = cad_cli()
+        .args(["schema", "organizational-unit"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let schema: serde_json::Value = serde_json::from_slice(&output).expect("schema output is JSON");
+    assert_eq!(schema["resource"], "organizational-unit");
+    assert_eq!(
+        schema["commands"]["duplicate"]["options"][0]["name"],
+        "--include-children"
     );
 }
 

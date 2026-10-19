@@ -8,6 +8,7 @@ pub mod custom_option;
 pub mod document;
 pub mod generate;
 pub mod inventory_line;
+pub mod organizational_unit;
 pub mod report;
 pub mod reporting_period;
 pub mod schema;
@@ -33,6 +34,8 @@ pub enum Command {
     ReportingPeriod(reporting_period::Group),
     /// Read and mutate inventory lines.
     InventoryLine(inventory_line::Group),
+    /// Manage the company's organizational units.
+    OrganizationalUnit(organizational_unit::Group),
     /// Upload and download supporting documents.
     Document(document::Group),
     /// Manage custom fields.
@@ -59,6 +62,9 @@ impl Command {
                 Invocation::Online(OnlineCommand::ReportingPeriod(group))
             }
             Self::InventoryLine(group) => Invocation::Online(OnlineCommand::InventoryLine(group)),
+            Self::OrganizationalUnit(group) => {
+                Invocation::Online(OnlineCommand::OrganizationalUnit(group))
+            }
             Self::Document(group) => Invocation::Online(OnlineCommand::Document(group)),
             Self::CustomField(group) => Invocation::Online(OnlineCommand::CustomField(group)),
             Self::CustomOption(group) => Invocation::Online(OnlineCommand::CustomOption(group)),
@@ -112,6 +118,7 @@ pub(crate) enum OnlineCommand {
     Company(company::Group),
     ReportingPeriod(reporting_period::Group),
     InventoryLine(inventory_line::Group),
+    OrganizationalUnit(organizational_unit::Group),
     Document(document::Group),
     CustomField(custom_field::Group),
     CustomOption(custom_option::Group),
@@ -136,6 +143,9 @@ impl OnlineCommand {
             Self::Company(group) => group.run(platform.connected()).await,
             Self::ReportingPeriod(group) => group.run(context, &platform.scoped().await?).await,
             Self::InventoryLine(group) => {
+                group.run(context, platform.scoped().await?.client()).await
+            }
+            Self::OrganizationalUnit(group) => {
                 group.run(context, platform.scoped().await?.client()).await
             }
             Self::Document(group) => {

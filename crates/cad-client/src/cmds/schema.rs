@@ -28,6 +28,8 @@ enum Command {
     Benchmark,
     /// Print the CLI schema for company reporting periods.
     ReportingPeriod,
+    /// Print the CLI schema for company organizational units.
+    OrganizationalUnit,
 }
 
 impl Group {
@@ -36,6 +38,7 @@ impl Group {
             Command::List => list_schema(),
             Command::Benchmark => super::benchmark::schema(),
             Command::ReportingPeriod => super::reporting_period::schema(),
+            Command::OrganizationalUnit => super::organizational_unit::schema(),
         };
         let mut bytes = serde_json::to_vec_pretty(&document)
             .map_err(|error| CliError::Input(format!("could not render CLI schema: {error}")))?;
@@ -55,6 +58,10 @@ fn list_schema() -> Value {
             "name": "reporting-period",
             "cardinality": "collection",
             "commands": ["list", "get", "details", "create", "update", "delete", "duplicate", "duplication-status"]
+        }, {
+            "name": "organizational-unit",
+            "cardinality": "collection",
+            "commands": ["list", "get", "create", "update", "delete", "count-entries", "duplicate"]
         }]
     })
 }
@@ -76,6 +83,11 @@ mod tests {
             resources
                 .iter()
                 .any(|resource| resource["name"] == "reporting-period")
+        );
+        assert!(
+            resources
+                .iter()
+                .any(|resource| resource["name"] == "organizational-unit")
         );
     }
 }

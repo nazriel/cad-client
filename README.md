@@ -216,6 +216,39 @@ copy job; its input extends the create object with `duplicatedReportingPeriodId`
 and the required booleans `duplicateEntries`, `duplicateNotes`, and
 `duplicateAttachments`. Poll an existing job with `duplication-status <id>`.
 
+## Organizational units
+
+Organizational units form the company hierarchy. Inspect the credential-free
+contract before creating or moving a unit:
+
+```console
+cad-cli organizational-unit --help
+cad-cli schema organizational-unit > organizational-unit-cli-schema.json
+```
+
+List the hierarchy, inspect one unit, or count its assigned inventory entries:
+
+```console
+cad-cli --output json organizational-unit list
+cad-cli --output json organizational-unit get 00000000-0000-0000-0000-000000000001
+cad-cli --output json organizational-unit count-entries 00000000-0000-0000-0000-000000000001
+```
+
+Create or update a unit using an ID-free JSON object. `parentId` is required on
+writes and identifies the parent organizational-unit UUID. The server provides
+the new unit's `id` in the response; it must not be included in input.
+
+```console
+printf '%s' '{"name":"Operations","position":0,"parentId":"00000000-0000-0000-0000-000000000001"}' | \
+  cad-cli --output json organizational-unit create --input -
+cad-cli --output json organizational-unit update 00000000-0000-0000-0000-000000000002 --input unit.json
+```
+
+`name` is limited to 255 characters and `position` is a zero-based non-negative
+sibling order. `duplicate <id> --include-children` returns the duplicated unit
+or units; omit the flag to duplicate only the selected unit. `delete <id>` asks
+for confirmation unless `--yes` is supplied.
+
 ## Shell completions and manual page
 
 Both are generated from the command definition itself, so they never drift from

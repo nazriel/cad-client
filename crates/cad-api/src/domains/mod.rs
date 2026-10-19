@@ -10,6 +10,7 @@ pub mod custom_fields;
 pub mod custom_options;
 pub mod documents;
 pub mod inventory_lines;
+pub mod organizational_units;
 pub mod reporting_periods;
 pub mod reports;
 
