@@ -23,7 +23,8 @@ cargo install --path crates/cad-client --bin cad-cli
 
 ## Configure
 
-Credentials are read only from the environment:
+Credentials are read only from the environment. Every platform request uses
+`Authorization: Bearer <CAD_API_KEY>.<CAD_API_SECRET>`:
 
 ```console
 export CAD_SERVER_URL=https://staging.carbonaltdelete.eu
@@ -37,7 +38,7 @@ short aliases `stage` and `prod`. There is deliberately no implicit server
 default.
 
 To select another accessible company, pass `--company-id` or set
-`CAD_COMPANY_ID`.
+`CAD_COMPANY_ID`; the CLI sends it as `X-CAD-Company-Id`.
 
 Every API request has a one-minute total budget; change it with
 `--request-timeout 90s`. Durations are written with an explicit unit and may
@@ -65,6 +66,11 @@ always a clean capture. In a terminal the table is drawn with frames and the
 status line is coloured; piped anywhere else the same table is plain ASCII with
 no escape sequences, and `NO_COLOR=1` turns colour off everywhere.
 
+Set `CAD_DEBUG_HTTP=1` to print each platform request method, URL, and selected
+company ID to stderr.
+Authorization headers, request bodies, and URL query strings are never logged.
+All platform API paths, including machine identity, are rooted at `/api/`.
+
 ## Shell completions and manual page
 
 Both are generated from the command definition itself, so they never drift from
@@ -89,4 +95,3 @@ cad-cli inventory-line list --filter 'country_inList=PL,,DE' --sort date_desc
 ## License
 
 MIT
-

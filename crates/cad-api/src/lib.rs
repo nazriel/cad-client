@@ -19,7 +19,10 @@ pub mod ids;
 mod protocol;
 mod transport;
 
-pub use auth::{ApiKeyV1Credentials, Company, SessionContext};
+pub use auth::{
+    ApiKeyV1Credentials, Company, CompanySelectionSource, MachineCompanySelection,
+    MachinePrincipal, SessionContext,
+};
 pub use client::{Client, CompanyScoped, Connected, Disconnected};
 pub use config::{Environment, ServerConfig};
 pub use error::{Error, Result};

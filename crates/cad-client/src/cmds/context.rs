@@ -15,7 +15,7 @@ pub struct Group {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
-    /// Show non-sensitive claims from the active session.
+    /// Show the authenticated machine identity and company selection.
     Show,
 }
 

@@ -1,17 +1,12 @@
 use std::{sync::Arc, time::Duration};
 
-use reqwest::{Method, redirect::Policy};
+use reqwest::redirect::Policy;
 use serde::{Serialize, de::DeserializeOwned};
-use tokio::sync::Mutex;
 
+use crate::{ApiKeyV1Credentials, Error, Result, ServerConfig, SessionContext, ids::CompanyId};
 use crate::{
-    ApiKeyV1Credentials, Error, Result, ServerConfig, SessionContext,
-    auth::TokenSet,
     config::{STORAGE_STALL_TIMEOUT, storage_redirect_policy},
-    protocol::{
-        AccessTokenResponse, ExchangeTokenResponse, RequestSpec, access_token_refresh,
-        api_key_exchange, decode_json_bytes,
-    },
+    protocol::{RequestSpec, decode_json_bytes, machine_identity},
 };
 
 #[derive(Clone)]
@@ -30,8 +25,6 @@ impl Transport {
             .user_agent(concat!("cad-api/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(Error::transport)?;
-        // Storage transfers are unbounded in total duration; only a stalled
-        // peer must fail, so this client uses a read timeout instead.
         let storage = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(15))
             .read_timeout(STORAGE_STALL_TIMEOUT)
@@ -51,40 +44,40 @@ impl Transport {
         &self.config
     }
 
-    pub(crate) async fn exchange(&self, credentials: &ApiKeyV1Credentials) -> Result<TokenSet> {
+    pub(crate) async fn identity(
+        &self,
+        credentials: &ApiKeyV1Credentials,
+    ) -> Result<SessionContext> {
         let response = self
-            .request_from_spec(api_key_exchange(credentials))?
+            .request_from_spec(machine_identity(), credentials, None)?
             .send()
             .await
             .map_err(Error::transport)?;
-        let response: ExchangeTokenResponse = decode_json_response(response)
+        let context = decode_json_response(response)
             .await
             .map_err(Error::classify_auth)?;
-        response.validate()?;
-
-        TokenSet::from_pair(response.access_token, response.refresh_token, None)
+        log_resolved_company(&context);
+        Ok(context)
     }
 
-    async fn refresh(&self, refresh_token: &str) -> Result<String> {
-        let response = self
-            .request_from_spec(access_token_refresh())?
-            .bearer_auth(refresh_token)
-            .send()
-            .await
-            .map_err(Error::transport)?;
-        let response: AccessTokenResponse = decode_json_response(response)
-            .await
-            .map_err(Error::classify_auth)?;
-        response.validate()?;
-        Ok(response.access_token)
-    }
-
-    fn request_from_spec<B, T>(&self, request: RequestSpec<B, T>) -> Result<reqwest::RequestBuilder>
+    fn request_from_spec<B, T>(
+        &self,
+        request: RequestSpec<B, T>,
+        credentials: &ApiKeyV1Credentials,
+        company_id: Option<CompanyId>,
+    ) -> Result<reqwest::RequestBuilder>
     where
         B: Serialize,
     {
         let url = self.config.endpoint(&request.path)?;
-        let mut builder = self.api.request(request.method, url);
+        log_request(&request.method, &url, company_id);
+        let mut builder = self
+            .api
+            .request(request.method, url)
+            .bearer_auth(credentials.bearer_token());
+        if let Some(company_id) = company_id {
+            builder = builder.header("X-CAD-Company-Id", company_id.to_string());
+        }
         if let Some(query) = request.query.as_deref() {
             builder = builder.query(query);
         }
@@ -95,62 +88,72 @@ impl Transport {
     }
 }
 
-pub(crate) struct Session {
-    tokens: Mutex<TokenSet>,
-}
-
-impl Session {
-    pub(crate) fn new(tokens: TokenSet) -> Self {
-        Self {
-            tokens: Mutex::new(tokens),
+fn log_request(method: &reqwest::Method, url: &url::Url, company_id: Option<CompanyId>) {
+    if std::env::var_os("CAD_DEBUG_HTTP").is_some() {
+        let mut safe_url = url.clone();
+        safe_url.set_query(None);
+        safe_url.set_fragment(None);
+        if let Some(company_id) = company_id {
+            eprintln!("cad-cli HTTP {method} {safe_url} X-CAD-Company-Id: {company_id}");
+        } else {
+            eprintln!("cad-cli HTTP {method} {safe_url}");
         }
-    }
-
-    pub(crate) async fn context(&self) -> SessionContext {
-        self.tokens.lock().await.context()
-    }
-
-    pub(crate) async fn bind_company(&self, company_id: crate::ids::CompanyId) -> Result<()> {
-        self.tokens.lock().await.bind_company(company_id)
-    }
-
-    async fn bearer(&self, transport: &Transport) -> Result<String> {
-        let mut tokens = self.tokens.lock().await;
-        if tokens.should_refresh() {
-            refresh_locked(transport, &mut tokens).await?;
-        }
-        Ok(tokens.access_token().to_owned())
-    }
-
-    pub(crate) async fn force_refresh(&self, transport: &Transport) -> Result<SessionContext> {
-        let mut tokens = self.tokens.lock().await;
-        refresh_locked(transport, &mut tokens).await?;
-        Ok(tokens.context())
     }
 }
 
-async fn refresh_locked(transport: &Transport, tokens: &mut TokenSet) -> Result<()> {
-    let access_token = transport.refresh(tokens.refresh_token()).await?;
-    tokens.replace_access(access_token)
+fn log_resolved_company(context: &SessionContext) {
+    if std::env::var_os("CAD_DEBUG_HTTP").is_some() {
+        let selection = &context.company_selection;
+        eprintln!(
+            "cad-cli resolved company: {} (source: {:?})",
+            selection
+                .resolved_company_id
+                .map(|company_id| company_id.to_string())
+                .as_deref()
+                .unwrap_or("none"),
+            selection.source
+        );
+    }
 }
 
 #[derive(Clone)]
 pub(crate) struct ClientCore {
     transport: Arc<Transport>,
-    session: Arc<Session>,
+    credentials: Arc<ApiKeyV1Credentials>,
+    company_id: Option<CompanyId>,
+    context: SessionContext,
 }
 
 impl ClientCore {
-    pub(crate) fn new(transport: Arc<Transport>, session: Arc<Session>) -> Self {
-        Self { transport, session }
+    pub(crate) fn new(
+        transport: Arc<Transport>,
+        credentials: ApiKeyV1Credentials,
+        company_id: Option<CompanyId>,
+        context: SessionContext,
+    ) -> Self {
+        Self {
+            transport,
+            credentials: Arc::new(credentials),
+            company_id,
+            context,
+        }
     }
 
     pub(crate) fn transport(&self) -> &Arc<Transport> {
         &self.transport
     }
 
-    pub(crate) fn session(&self) -> &Arc<Session> {
-        &self.session
+    pub(crate) fn session_context(&self) -> SessionContext {
+        self.context.clone()
+    }
+
+    pub(crate) fn with_company(&self, company_id: CompanyId, context: SessionContext) -> Self {
+        Self {
+            transport: Arc::clone(&self.transport),
+            credentials: Arc::clone(&self.credentials),
+            company_id: Some(company_id),
+            context,
+        }
     }
 
     pub(crate) fn server_config(&self) -> &ServerConfig {
@@ -163,13 +166,21 @@ impl ClientCore {
         T: DeserializeOwned,
     {
         let response = self
-            .request_builder(
-                request.method,
-                &request.path,
-                request.query.as_deref(),
-                request.body.as_ref(),
-            )
-            .await?
+            .transport
+            .request_from_spec(request, &self.credentials, self.company_id)?
+            .send()
+            .await
+            .map_err(Error::transport)?;
+        decode_json_response(response).await
+    }
+
+    pub(crate) async fn identity_for_company(
+        &self,
+        company_id: CompanyId,
+    ) -> Result<SessionContext> {
+        let response = self
+            .transport
+            .request_from_spec(machine_identity(), &self.credentials, Some(company_id))?
             .send()
             .await
             .map_err(Error::transport)?;
@@ -178,32 +189,6 @@ impl ClientCore {
 
     pub(crate) fn storage_client(&self) -> &reqwest::Client {
         &self.transport.storage
-    }
-
-    async fn request_builder<B>(
-        &self,
-        method: Method,
-        path: &str,
-        query: Option<&[(String, String)]>,
-        body: Option<&B>,
-    ) -> Result<reqwest::RequestBuilder>
-    where
-        B: Serialize,
-    {
-        let access_token = self.session.bearer(&self.transport).await?;
-        let url = self.transport.config.endpoint(path)?;
-        let mut request = self
-            .transport
-            .api
-            .request(method, url)
-            .bearer_auth(access_token);
-        if let Some(query) = query {
-            request = request.query(query);
-        }
-        if let Some(body) = body {
-            request = request.json(body);
-        }
-        Ok(request)
     }
 }
 
