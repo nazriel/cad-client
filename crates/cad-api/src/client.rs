@@ -1,11 +1,8 @@
 use std::{fmt, sync::Arc};
 
 use crate::{
-    ApiKeyV1Credentials, Company, Error, Result, ServerConfig, SessionContext,
-    auth::TokenSet,
-    ids::CompanyId,
-    protocol::{companies, switch_company as switch_company_request},
-    transport::{Session, Transport},
+    ApiKeyV2Credentials, Company, Error, Result, ServerConfig, SessionContext, ids::CompanyId,
+    protocol::companies, transport::Transport,
 };
 
 pub(crate) use crate::transport::ClientCore;
@@ -31,7 +28,7 @@ trait Authenticated: ClientState {
     fn core(&self) -> &ClientCore;
 }
 
-/// The initial client state. It can exchange credentials but cannot perform
+/// The initial client state. It can validate credentials but cannot perform
 /// authenticated operations.
 #[derive(Clone)]
 pub struct Disconnected {
@@ -154,21 +151,18 @@ impl Client<Disconnected> {
         })
     }
 
-    /// Exchanges v1 API-key credentials and consumes them with the disconnected client.
+    /// Validates machine API-key credentials and consumes them with the disconnected client.
     ///
     /// # Errors
     ///
-    /// Returns an authentication, transport, or protocol error when the credential
-    /// exchange fails or the server returns an invalid token pair.
-    pub async fn connect(self, credentials: ApiKeyV1Credentials) -> Result<Client<Connected>> {
+    /// Returns an authentication, transport, or protocol error when the identity
+    /// request fails or the server returns an invalid response.
+    pub async fn connect(self, credentials: ApiKeyV2Credentials) -> Result<Client<Connected>> {
         let transport = self.state.transport;
-        let result = transport.exchange(&credentials).await;
-        drop(credentials);
-        let tokens = result?;
-        let session = Arc::new(Session::new(tokens));
+        let context = transport.identity(&credentials).await?;
         Ok(Client {
             state: Connected {
-                core: ClientCore::new(transport, session),
+                core: ClientCore::new(transport, credentials, None, context),
             },
         })
     }
@@ -201,33 +195,22 @@ impl<State: Authenticated> Client<State> {
         self.state.core().execute(companies()).await
     }
 
-    /// Returns non-sensitive context decoded from the current access token.
+    /// Returns the machine identity context established during connection.
     pub async fn context(&self) -> SessionContext {
-        self.state.core().session().context().await
+        self.state.core().session_context()
     }
 
-    /// Explicitly refreshes the access token. The refresh token and any company
-    /// scope are preserved.
-    ///
-    /// # Errors
-    ///
-    /// Returns an authentication, transport, or protocol error if refresh fails.
-    pub async fn refresh(&self) -> Result<SessionContext> {
-        let core = self.state.core();
-        core.session().force_refresh(core.transport()).await
-    }
-
-    /// Creates a new independent session scoped to `company_id`.
+    /// Creates a new independent client scoped with `X-CAD-Company-Id`.
     ///
     /// # Errors
     ///
     /// Returns an authentication, transport, protocol, or API error if the company
-    /// switch fails.
+    /// selection is rejected.
     pub async fn for_company(&self, company_id: CompanyId) -> Result<Client<CompanyScoped>> {
         switch_company(self.state.core(), company_id).await
     }
 
-    /// Drops all tokens and returns to the disconnected state.
+    /// Drops credentials and returns to the disconnected state.
     #[must_use]
     pub fn disconnect(self) -> Client<Disconnected> {
         Client {
@@ -244,22 +227,23 @@ impl<State: Authenticated> Client<State> {
 }
 
 impl Client<Connected> {
-    /// Consumes this client and binds it to the company carried by its access token.
+    /// Consumes this client and binds it to the company resolved for its machine key.
     ///
     /// # Errors
     ///
-    /// Returns an authentication error if the token has no company, or a protocol
-    /// error if its company claims conflict.
+    /// Returns an authentication error if the identity response has no resolved company.
     pub async fn scope_current_company(self) -> Result<Client<CompanyScoped>> {
         let core = self.state.core;
-        let context = core.session().context().await;
-        let company_id = context.company_id.ok_or_else(|| {
-            Error::authentication(
-                None,
-                "the current token does not contain a client-company context",
-            )
-        })?;
-        core.session().bind_company(company_id).await?;
+        let company_id = core
+            .session_context()
+            .company_selection
+            .resolved_company_id
+            .ok_or_else(|| {
+                Error::authentication(
+                    None,
+                    "the machine identity response has no resolved company context",
+                )
+            })?;
 
         Ok(Client {
             state: CompanyScoped { core, company_id },
@@ -279,15 +263,22 @@ impl Client<CompanyScoped> {
 }
 
 async fn switch_company(core: &ClientCore, company_id: CompanyId) -> Result<Client<CompanyScoped>> {
-    let response = core.execute(switch_company_request(company_id)).await?;
-    response.validate()?;
-    let tokens = TokenSet::from_pair(
-        response.access_token,
-        response.refresh_token,
-        Some(company_id),
-    )?;
-    let session = Arc::new(Session::new(tokens));
-    let switched_core = ClientCore::new(Arc::clone(core.transport()), session);
+    let context = core.identity_for_company(company_id).await?;
+    let resolved = context
+        .company_selection
+        .resolved_company_id
+        .ok_or_else(|| {
+            Error::authentication(
+                None,
+                "the machine identity response has no resolved company context",
+            )
+        })?;
+    if resolved != company_id {
+        return Err(Error::protocol(format!(
+            "machine identity resolved company {resolved}, expected {company_id}"
+        )));
+    }
+    let switched_core = core.with_company(company_id, context);
 
     Ok(Client {
         state: CompanyScoped {

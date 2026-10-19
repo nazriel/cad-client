@@ -30,6 +30,7 @@ serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
+tracing-subscriber.workspace = true
 unicode-width.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "time"] }
 uuid.workspace = true

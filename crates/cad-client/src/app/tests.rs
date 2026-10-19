@@ -8,7 +8,6 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::CommandFactory;
 use uuid::Uuid;
 use wiremock::matchers::{method, path};
@@ -22,7 +21,7 @@ use crate::output::TableStyle;
 use crate::support::terminal::{Progress, StatusKind, Terminal};
 
 const COMPANY_ID: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0042);
-const EXCHANGE_PATH: &str = "/api/keys/v1/api/auth";
+const IDENTITY_PATH: &str = "/api/auth/v2/machine/identity";
 const COMPANIES_PATH: &str = "/api/accounts/v1/companies";
 
 #[derive(Default)]
@@ -116,30 +115,20 @@ impl Terminal for FakeTerminal {
     }
 }
 
-/// Access token accepted by the SDK: unsigned, but with the claims it reads.
-fn access_token() -> String {
-    let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"none"}"#);
-    let payload = URL_SAFE_NO_PAD.encode(
-        serde_json::json!({
-            "exp": chrono::Utc::now().timestamp() + 300,
-            "userId": Uuid::nil(),
-            "com": COMPANY_ID,
-            "clientCompanyId": COMPANY_ID,
-        })
-        .to_string(),
-    );
-    format!("{header}.{payload}.")
-}
-
-/// A loopback fixture that answers the credential exchange and nothing else.
+/// A loopback fixture that answers the machine identity endpoint and nothing else.
 async fn mock_server() -> MockServer {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path(EXCHANGE_PATH))
+    Mock::given(method("GET"))
+        .and(path(IDENTITY_PATH))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "accessToken": access_token(),
-            "tokenType": "Bearer",
-            "refreshToken": "refresh"
+            "principal": {
+                "userId": Uuid::nil(),
+                "affiliatedCompanyId": COMPANY_ID
+            },
+            "companySelection": {
+                "resolvedCompanyId": COMPANY_ID,
+                "source": "DEFAULT"
+            }
         })))
         .mount(&server)
         .await;
@@ -243,7 +232,7 @@ async fn company_list_renders_the_server_payload_as_json() {
     assert_eq!(
         request_paths(&server).await,
         [
-            format!("POST {EXCHANGE_PATH}"),
+            format!("GET {IDENTITY_PATH}"),
             format!("GET {COMPANIES_PATH}")
         ]
     );
@@ -332,8 +321,8 @@ async fn delete_outside_a_tty_refuses_without_yes() {
     assert!(matches!(error, CliError::Input(_)));
     assert_eq!(
         request_paths(&server).await,
-        [format!("POST {EXCHANGE_PATH}")],
-        "only the credential exchange may reach the server"
+        [format!("GET {IDENTITY_PATH}")],
+        "only the machine identity check may reach the server"
     );
     assert!(terminal.stdout().is_empty());
 }

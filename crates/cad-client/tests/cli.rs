@@ -6,14 +6,13 @@
 //! in-process test of `execute()` cannot check.
 
 use assert_cmd::Command;
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use predicates::prelude::*;
 use uuid::Uuid;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const COMPANY_ID: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0042);
-const EXCHANGE_PATH: &str = "/api/keys/v1/api/auth";
+const IDENTITY_PATH: &str = "/api/auth/v2/machine/identity";
 const COMPANIES_PATH: &str = "/api/accounts/v1/companies";
 
 /// A `cad-cli` invocation with the ambient CAD environment scrubbed, so a
@@ -40,23 +39,9 @@ fn with_credentials() -> Command {
     command
 }
 
-fn access_token() -> String {
-    let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"none"}"#);
-    let payload = URL_SAFE_NO_PAD.encode(
-        serde_json::json!({
-            "exp": chrono::Utc::now().timestamp() + 300,
-            "userId": Uuid::nil(),
-            "com": COMPANY_ID,
-            "clientCompanyId": COMPANY_ID,
-        })
-        .to_string(),
-    );
-    format!("{header}.{payload}.")
-}
-
-async fn mock_exchange(server: &MockServer, response: ResponseTemplate) {
-    Mock::given(method("POST"))
-        .and(path(EXCHANGE_PATH))
+async fn mock_identity(server: &MockServer, response: ResponseTemplate) {
+    Mock::given(method("GET"))
+        .and(path(IDENTITY_PATH))
         .respond_with(response)
         .mount(server)
         .await;
@@ -125,12 +110,17 @@ fn an_unknown_flag_is_a_usage_error() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn company_list_writes_only_json_to_stdout() {
     let server = MockServer::start().await;
-    mock_exchange(
+    mock_identity(
         &server,
         ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "accessToken": access_token(),
-            "tokenType": "Bearer",
-            "refreshToken": "refresh"
+            "principal": {
+                "userId": Uuid::nil(),
+                "affiliatedCompanyId": COMPANY_ID
+            },
+            "companySelection": {
+                "resolvedCompanyId": COMPANY_ID,
+                "source": "DEFAULT"
+            }
         })),
     )
     .await;
@@ -174,7 +164,7 @@ async fn rejected_credentials_exit_three() {
     let server = MockServer::start().await;
     // Staging answers an unknown API key with 404 rather than 401; both must
     // still be an authentication failure.
-    mock_exchange(
+    mock_identity(
         &server,
         ResponseTemplate::new(404)
             .set_body_json(serde_json::json!({"msg": "No ApiKey found for id 0"})),

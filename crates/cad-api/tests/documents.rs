@@ -9,38 +9,42 @@ mod support;
 
 use cad_api::domains::documents::DocumentUploadRequest;
 use cad_api::ids::CompanyId;
-use cad_api::{ApiKeyV1Credentials, Client, CompanyScoped, ServerConfig};
-use chrono::Utc;
+use cad_api::{ApiKeyV2Credentials, Client, CompanyScoped, ServerConfig};
 use std::io::Write as _;
 use uuid::Uuid;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use support::{header, unsigned_token};
+use support::header;
 
-const EXCHANGE_PATH: &str = "/api/keys/v1/api/auth";
+const IDENTITY_PATH: &str = "/api/auth/v2/machine/identity";
 const PREPARE_UPLOAD_PATH: &str = "/api/documents/v1/pre-signed-write";
 const STORAGE_PATH: &str = "/upload";
 
 async fn connect(server: &MockServer, company_id: CompanyId) -> Client<CompanyScoped> {
-    Mock::given(method("POST"))
-        .and(path(EXCHANGE_PATH))
+    Mock::given(method("GET"))
+        .and(path(IDENTITY_PATH))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "accessToken": unsigned_token(Some(company_id), Utc::now().timestamp() + 5 * 60),
-            "tokenType": "Bearer",
-            "refreshToken": "refresh"
+            "principal": {
+                "userId": Uuid::nil(),
+                "affiliatedCompanyId": company_id
+            },
+            "companySelection": {
+                "resolvedCompanyId": company_id,
+                "source": "DEFAULT"
+            }
         })))
         .mount(server)
         .await;
 
     Client::new(ServerConfig::insecure_loopback(server.uri()).expect("loopback HTTP"))
         .expect("valid loopback configuration")
-        .connect(ApiKeyV1Credentials::new(Uuid::new_v4(), "secret"))
+        .connect(ApiKeyV2Credentials::new(Uuid::new_v4(), "secret"))
         .await
-        .expect("credential exchange succeeds")
+        .expect("machine identity succeeds")
         .scope_current_company()
         .await
-        .expect("the token carries a company")
+        .expect("the machine key resolves a company")
 }
 
 #[tokio::test]
