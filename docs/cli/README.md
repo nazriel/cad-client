@@ -2,8 +2,6 @@
 
 <!-- Generated from the command definitions by `mise run docs:cli`. Do not edit. -->
 
-Carbon+Alt+Delete command-line client.
-
 ```console
 cad-cli [OPTIONS] <COMMAND>
 ```

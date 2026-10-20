@@ -8,12 +8,12 @@ use std::ffi::OsString;
 use std::process::ExitCode;
 
 use cad_api::Client;
-use clap::{ArgMatches, CommandFactory, FromArgMatches};
+use clap::{ArgMatches, FromArgMatches};
 
 use self::context::CommandContext;
 use self::platform::Platform;
-use crate::cli::Cli;
 use crate::cli::args::LocalInputPath;
+use crate::cli::{Cli, command_with_help_header};
 use crate::cmds::Invocation;
 use crate::config::{AppConfig, Environment, ProcessEnvironment};
 use crate::error::CliError;
@@ -25,7 +25,7 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    let parsed = Cli::command()
+    let parsed = command_with_help_header()
         .try_get_matches_from(args)
         .and_then(|matches| Cli::from_arg_matches(&matches).map(|cli| (cli, matches)));
     let (cli, matches) = match parsed {
