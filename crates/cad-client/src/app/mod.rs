@@ -64,7 +64,7 @@ async fn execute(
 
     let (server, credentials, company_id) =
         AppConfig::resolve(&cli.global, environment)?.into_parts();
-    // Local preconditions are checked before the credential exchange so a typo
+    // Local preconditions are checked before the identity request so a typo
     // in a path does not cost a network round-trip to fail on.
     check_local_inputs(matches)?;
     let connected = Client::new(server)?.connect(credentials).await?;

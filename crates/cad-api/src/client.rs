@@ -82,10 +82,10 @@ impl Authenticated for CompanyScoped {
 /// exist only for [`Client<CompanyScoped>`].
 ///
 /// ```compile_fail
-/// use cad_api::{Client, Disconnected, ServerConfig};
+/// use cad_api::{Client, Disconnected};
 ///
 /// async fn invalid(client: Client<Disconnected>) {
-///     client.refresh().await.unwrap();
+///     client.companies().await.unwrap();
 /// }
 /// ```
 ///

@@ -36,11 +36,12 @@ impl Platform {
     /// Binds the session to a company and wraps it for the domain ports.
     ///
     /// An explicit `--company-id` switches to that company; otherwise the
-    /// company already carried by the exchanged token is adopted.
+    /// company the machine identity selected for the key is adopted.
     ///
     /// # Errors
     ///
-    /// Returns [`CliError`] if the switch fails or the token carries no company.
+    /// Returns [`CliError`] if the switch fails or the identity selected no
+    /// company.
     pub(crate) async fn scoped(&self) -> Result<SdkAdapter, CliError> {
         let scoped = match self.company_id {
             Some(company_id) => self.connected.for_company(company_id).await?,

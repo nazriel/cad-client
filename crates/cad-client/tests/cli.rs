@@ -176,12 +176,12 @@ async fn company_list_keeps_debug_logs_out_of_json_stdout() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rejected_credentials_exit_three() {
     let server = MockServer::start().await;
-    // Staging answers an unknown API key with 404 rather than 401; both must
-    // still be an authentication failure.
+    // A rejected key is an authentication failure whatever client-error
+    // status the API chose, not only 401.
     mock_identity(
         &server,
         ResponseTemplate::new(404)
-            .set_body_json(serde_json::json!({"msg": "No ApiKey found for id 0"})),
+            .set_body_json(serde_json::json!({"msg": "example key rejection"})),
     )
     .await;
 
@@ -198,5 +198,5 @@ async fn rejected_credentials_exit_three() {
         .await
         .code(3)
         .stdout(predicate::str::is_empty())
-        .stderr(predicate::str::contains("No ApiKey found"));
+        .stderr(predicate::str::contains("example key rejection"));
 }

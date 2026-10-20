@@ -489,7 +489,7 @@ async fn delete_outside_a_tty_refuses_without_yes() {
 }
 
 #[tokio::test]
-async fn unreadable_input_fails_before_the_credential_exchange() {
+async fn unreadable_input_fails_before_the_identity_request() {
     let terminal = FakeTerminal::default();
     let error = run_cli(
         &[

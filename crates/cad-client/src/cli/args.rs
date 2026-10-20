@@ -60,7 +60,7 @@ pub enum OutputFormat {
 /// A path naming a local file the command must be able to read.
 ///
 /// Its *type*, not the name of the argument carrying it, is what makes
-/// [`crate::app`] check the file before any credential is exchanged. A new
+/// [`crate::app`] check the file before any request is sent. A new
 /// command inherits that precondition by declaring this type; it cannot forget
 /// to name its argument `input` or `file`.
 #[derive(Debug, Clone, PartialEq, Eq)]

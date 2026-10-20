@@ -102,10 +102,9 @@ impl Error {
 
     /// Reclassifies a rejection from an endpoint whose only job is authentication.
     ///
-    /// This is applied solely to the credential exchange and the token refresh,
-    /// so every client error there is an authentication failure regardless of
-    /// the status the platform chose: an unknown API key is answered with 404,
-    /// not 401, and must still map to the authentication exit code.
+    /// This is applied solely to the machine identity request: every client
+    /// error from it maps to an authentication failure, whatever status the API
+    /// chose, so a rejected key always ends with the authentication exit code.
     pub(crate) fn classify_auth(self) -> Self {
         match self {
             Self::Api {
@@ -169,11 +168,11 @@ mod tests {
 
     #[test]
     fn every_client_error_from_an_auth_endpoint_becomes_an_authentication_failure() {
-        // An unknown API key is rejected with 404, not 401.
+        // Whatever client-error status the API chose, the key was rejected.
         let unknown_key =
-            Error::from_api_response(404, br#"{"msg":"No ApiKey found for id 0"}"#).classify_auth();
+            Error::from_api_response(404, br#"{"msg":"example key rejection"}"#).classify_auth();
         assert!(matches!(unknown_key, Error::Authentication { status, .. } if status == Some(404)));
-        assert!(unknown_key.to_string().contains("No ApiKey found"));
+        assert!(unknown_key.to_string().contains("example key rejection"));
 
         let rejected = Error::from_api_response(401, b"{}").classify_auth();
         assert!(matches!(rejected, Error::Authentication { .. }));
