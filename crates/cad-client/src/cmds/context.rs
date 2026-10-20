@@ -28,9 +28,9 @@ impl Group {
         match self.command {
             Command::Show => {
                 let session = if let Some(company_id) = company_id {
-                    client.for_company(company_id).await?.context().await
+                    client.for_company(company_id).await?.context()
                 } else {
-                    client.context().await
+                    client.context()
                 };
                 to_value(session)
             }
