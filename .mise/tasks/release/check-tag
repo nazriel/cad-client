@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+#MISE description="Fail unless the tag matches the workspace version in Cargo.toml"
+#USAGE arg "<tag>" help="Release tag, for example v0.2.0"
+set -euo pipefail
+
+tag="$1"
+version="$(cargo pkgid -p cad-client | sed 's/.*[#@]//')"
+if [[ "$tag" != "v${version}" ]]; then
+  echo "tag ${tag} does not match Cargo.toml version ${version}" >&2
+  exit 1
+fi
