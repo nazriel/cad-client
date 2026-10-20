@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="Regenerate the command reference in docs/cli and the README command table"
+set -euo pipefail
+
+# The reference is rendered by the test that checks it is up to date; the
+# variable makes that test write the pages instead of comparing them.
+CAD_CLI_UPDATE_DOCS=1 cargo test --locked -p cad-client --lib -- cli::docs::command_reference_is_up_to_date
