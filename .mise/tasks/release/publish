@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+#MISE description="Create the GitHub release for a tag from the archives in dist/"
+#USAGE arg "<tag>" help="Release tag, for example v0.2.0"
+set -euo pipefail
+
+tag="$1"
+repo="${GITHUB_REPOSITORY:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"
+
+shopt -s nullglob
+archives=(dist/*.tar.gz dist/*.zip)
+if [[ ${#archives[@]} -eq 0 ]]; then
+  echo "no archives in dist/; run \`mise run dist <target>\` first" >&2
+  exit 1
+fi
+(cd dist && shasum -a 256 -- "${archives[@]#dist/}" > SHA256SUMS)
+
+notes="$(mktemp)"
+trap 'rm -f "$notes"' EXIT
+.mise/tasks/release/notes "$tag" "$repo" "${archives[@]}" dist/SHA256SUMS > "$notes"
+
+flags=(--title "$tag" --notes-file "$notes" --verify-tag)
+if [[ "$tag" == *-* ]]; then
+  flags+=(--prerelease)
+fi
+gh release create "$tag" --repo "$repo" "${flags[@]}" "${archives[@]}" dist/SHA256SUMS

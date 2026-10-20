@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+#MISE description="Print Markdown release notes: commits since the previous tag, grouped by type, and download links"
+#USAGE arg "<tag>" help="Release tag, for example v0.2.0"
+#USAGE arg "<repo>" help="GitHub repository as owner/name"
+#USAGE arg "[asset]" var=#true help="Release asset files to link"
+set -euo pipefail
+
+tag="$1"
+repo="$2"
+shift 2
+
+previous="$(git describe --tags --abbrev=0 --match 'v*' "${tag}^" 2>/dev/null || true)"
+if [[ -n "$previous" ]]; then
+  range="${previous}..${tag}"
+else
+  range="$tag"
+fi
+
+features=""
+fixes=""
+other=""
+while IFS=$'\t' read -r sha subject; do
+  [[ -z "$sha" ]] && continue
+  line="- ${subject} (${sha})"$'\n'
+  case "$subject" in
+    feat:* | feat\(*) features+="$line" ;;
+    fix:* | fix\(*) fixes+="$line" ;;
+    *) other+="$line" ;;
+  esac
+done < <(git log --no-merges --format='%h%x09%s' "$range")
+
+echo "## Changes"
+echo
+if [[ -n "$previous" ]]; then
+  echo "Since [\`${previous}\`](https://github.com/${repo}/compare/${previous}...${tag})."
+else
+  echo "Initial release."
+fi
+echo
+[[ -n "$features" ]] && printf '### Features\n\n%s\n' "$features"
+[[ -n "$fixes" ]] && printf '### Fixes\n\n%s\n' "$fixes"
+[[ -n "$other" ]] && printf '### Other\n\n%s\n' "$other"
+[[ -z "$features$fixes$other" ]] && printf 'No commits.\n\n'
+
+if [[ $# -gt 0 ]]; then
+  echo "## Downloads"
+  echo
+  for asset in "$@"; do
+    name="$(basename "$asset")"
+    echo "- [\`${name}\`](https://github.com/${repo}/releases/download/${tag}/${name})"
+  done
+fi

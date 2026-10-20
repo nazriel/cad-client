@@ -1,0 +1,69 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify tag and test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
+        with:
+          version: 2026.10.11
+          install_args: rust mr-boxington
+          # A tag build installs its tools fresh rather than trusting a cache.
+          cache: false
+
+      # Same series as CI's Linux test job, so tests restore its cache.
+      - uses: jdx/mr-boxington-action@47ce49b32025d93a7a2f4570815afaa2b7092240 # v1.7.2
+        with:
+          cache-generation: test
+          github-cache-mode: objects
+
+      - run: mise run release:check-tag "$GITHUB_REF_NAME"
+
+      - run: mise run test
+
+  build:
+    needs: verify
+    uses: ./.github/workflows/build.yml
+
+  publish:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      # Full history and tags: the release notes list commits since the
+      # previous tag.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
+        with:
+          version: 2026.10.11
+          install_args: gh
+          cache: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          pattern: dist-*
+          merge-multiple: true
+
+      - run: mise run release:publish "$GITHUB_REF_NAME"
+        env:
+          GH_TOKEN: ${{ github.token }}
