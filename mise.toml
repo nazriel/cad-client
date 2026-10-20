@@ -1,0 +1,12 @@
+min_version = "2026.9.2"
+
+[tools]
+rust = { version = "1.99.1", profile = "minimal", components = "clippy,rustfmt", mr_boxington = true }
+mr-boxington = "1.25.0"
+hk = "2.7.1"
+actionlint = "1.7.12"
+shellcheck = "0.11.0"
+zizmor = "1.31.1"
+cargo-deny = "0.20.2"
+gh = "2.102.0"
+jq = "1.8.2"
