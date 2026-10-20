@@ -1,0 +1,66 @@
+name: Build
+
+# Release archives for every supported target. Called by CI on every push so
+# the default branch keeps a warm cache per runner and pull requests prove the
+# cross builds, and by the release workflow with the same steps, so a tagged
+# build restores that cache.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  dist:
+    name: Dist ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-24.04
+            targets: x86_64-unknown-linux-musl
+          - name: linux-aarch64
+            os: ubuntu-24.04-arm
+            targets: aarch64-unknown-linux-musl
+          # Both Apple targets in one job: one macOS runner to wait for, and
+          # host build dependencies compiled once.
+          - name: macos
+            os: macos-15
+            targets: aarch64-apple-darwin x86_64-apple-darwin
+          - name: windows-x86_64
+            os: windows-2025
+            targets: x86_64-pc-windows-msvc
+          - name: windows-aarch64
+            os: windows-11-arm
+            targets: aarch64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
+        with:
+          version: 2026.10.11
+          install_args: rust mr-boxington
+
+      - name: Install musl tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+
+      - uses: jdx/mr-boxington-action@47ce49b32025d93a7a2f4570815afaa2b7092240 # v1.7.2
+        with:
+          cache-generation: dist-${{ matrix.name }}
+          github-cache-mode: objects
+
+      - run: mise run dist ${{ matrix.targets }}
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist-${{ matrix.name }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+          retention-days: 7

@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
+        with:
+          version: 2026.10.11
+
+      # After mise, so the cache key covers the pinned rustc. The objects mode
+      # carries mbx's compiler cache; the default target mode leaves crates that
+      # generate files in OUT_DIR (serde_core, thiserror) stale after restore.
+      - uses: jdx/mr-boxington-action@47ce49b32025d93a7a2f4570815afaa2b7092240 # v1.7.2
+        with:
+          cache-generation: lint
+          github-cache-mode: objects
+
+      - run: mise run lint
+
+      - run: mise run doc
+
+  test:
+    name: Test ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
+        with:
+          version: 2026.10.11
+          install_args: rust mr-boxington
+
+      - uses: jdx/mr-boxington-action@47ce49b32025d93a7a2f4570815afaa2b7092240 # v1.7.2
+        with:
+          cache-generation: test
+          github-cache-mode: objects
+
+      - run: mise run test
+
+  build:
+    uses: ./.github/workflows/build.yml
