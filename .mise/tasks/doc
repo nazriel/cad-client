@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Build the API documentation, failing on rustdoc warnings"
+set -euo pipefail
+
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
