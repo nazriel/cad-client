@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+#MISE description="Build release binaries and package them as dist/cad-cli-v<version>-<target>.tar.gz (.zip for Windows)"
+#USAGE arg "[target]" var=#true help="Rust target triples (defaults to the host)"
+set -euo pipefail
+
+targets=("$@")
+if [[ ${#targets[@]} -eq 0 ]]; then
+  targets=("$(rustc -vV | sed -n 's/^host: //p')")
+fi
+version="$(cargo pkgid -p cad-client | sed 's/.*[#@]//')"
+
+rustup target add "${targets[@]}"
+target_args=()
+for target in "${targets[@]}"; do
+  target_args+=(--target "$target")
+done
+cargo build --release --locked -p cad-client --bin cad-cli "${target_args[@]}"
+
+for target in "${targets[@]}"; do
+  archive="cad-cli-v${version}-${target}"
+  exe=""
+  [[ "$target" == *-windows-* ]] && exe=".exe"
+  rm -rf "dist/${archive}" "dist/${archive}".{tar.gz,zip}
+  mkdir -p "dist/${archive}"
+  cp "target/${target}/release/cad-cli${exe}" README.md LICENSE "dist/${archive}/"
+  if [[ -n "$exe" ]]; then
+    (cd dist && 7z a -tzip -bso0 -bsp0 "${archive}.zip" "${archive}")
+    echo "dist/${archive}.zip"
+  else
+    tar -C dist -czf "dist/${archive}.tar.gz" "${archive}"
+    echo "dist/${archive}.tar.gz"
+  fi
+  rm -rf "dist/${archive}"
+done
