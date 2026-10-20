@@ -5,7 +5,9 @@ pub(crate) mod args;
 mod docs;
 pub(crate) mod help;
 
-use clap::Parser;
+use std::io::IsTerminal;
+
+use clap::{Command, CommandFactory, Parser};
 
 pub use args::{EnvironmentName, GlobalArgs, OutputFormat};
 
@@ -54,12 +56,65 @@ const EXAMPLES: &[Example] = &[
     ),
 ];
 
-/// Parsed `cad-cli` invocation.
+const PINK: &str = "38;2;255;85;120";
+const YELLOW: &str = "38;2;255;200;50";
+const PURPLE: &str = "38;2;150;130;240";
+const TEAL: &str = "38;2;10;190;160";
+const TEXT_TEAL: &str = "38;2;0;105;92";
+
+/// Returns the root Clap command with the branded help-only header.
+pub(crate) fn command_with_help_header() -> Command {
+    Cli::command().before_help(help_header())
+}
+
+fn help_header() -> String {
+    render_help_logo(std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none())
+}
+
+/// Renders the terminal-safe hash-mark rendition of CAD's four-part logo.
+fn render_help_logo(colour: bool) -> String {
+    let paint = |text: &str, ansi: &str| {
+        if colour {
+            format!("\x1b[{ansi}m{text}\x1b[0m")
+        } else {
+            text.to_owned()
+        }
+    };
+    let name = paint("Carbon+Alt+Delete", TEXT_TEAL);
+    let description = paint("Command-Line Interface", TEXT_TEAL);
+
+    [
+        format!("       {}       ", paint("##", PINK)),
+        format!("      {}      ", paint("####", PINK)),
+        format!("     {}     ", paint("######", PINK)),
+        format!("    {}    ", paint("########", PINK)),
+        format!("  {}        {}  ", paint("##", YELLOW), paint("##", PURPLE)),
+        format!(" {}        {} ", paint("###", YELLOW), paint("###", PURPLE)),
+        format!(
+            "{}        {}  {name}",
+            paint("####", YELLOW),
+            paint("####", PURPLE)
+        ),
+        format!(
+            "{}        {}  {description}",
+            paint("####", YELLOW),
+            paint("####", PURPLE)
+        ),
+        format!(" {}        {} ", paint("###", YELLOW), paint("###", PURPLE)),
+        format!("  {}        {}  ", paint("##", YELLOW), paint("##", PURPLE)),
+        format!("    {}    ", paint("########", TEAL)),
+        format!("     {}     ", paint("######", TEAL)),
+        format!("      {}      ", paint("####", TEAL)),
+        format!("       {}       ", paint("##", TEAL)),
+    ]
+    .join("\n")
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "cad-cli",
     version,
-    about = "Carbon+Alt+Delete command-line client",
+    about = None,
     after_long_help = help::environment_and_examples(ENVIRONMENT, EXAMPLES)
 )]
 pub struct Cli {
@@ -76,12 +131,39 @@ mod tests {
 
     use clap::{CommandFactory, Parser};
 
-    use super::Cli;
+    use super::{Cli, render_help_logo};
     use crate::cmds;
 
     #[test]
     fn clap_definition_is_consistent() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn root_help_logo_is_sixteen_columns_without_empty_rows_and_names_cad() {
+        let header = render_help_logo(false);
+        let lines: Vec<_> = header.lines().collect();
+
+        assert_eq!(lines.len(), 14);
+        assert!(lines.iter().all(|line| line.chars().take(16).count() == 16));
+        assert!(lines.iter().all(|line| !line[..16].trim().is_empty()));
+        assert_eq!(lines[6], "####        ####  Carbon+Alt+Delete");
+        assert_eq!(lines[7], "####        ####  Command-Line Interface");
+    }
+
+    #[test]
+    fn interactive_help_logo_uses_all_brand_colours() {
+        let header = render_help_logo(true);
+
+        for colour in [
+            super::PINK,
+            super::YELLOW,
+            super::PURPLE,
+            super::TEAL,
+            super::TEXT_TEAL,
+        ] {
+            assert!(header.contains(&format!("\x1b[{colour}m")));
+        }
     }
 
     #[test]
