@@ -3,7 +3,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-macro_rules! benchmark_code {
+macro_rules! benchmark_enum {
     ($name:ident { $($variant:ident => $wire:literal),+ $(,)? }) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
         pub enum $name {
@@ -12,7 +12,7 @@ macro_rules! benchmark_code {
     };
 }
 
-benchmark_code! { HighLevelSectorCode {
+benchmark_enum! { HighLevelSectorCode {
     A => "A",
     B => "B",
     C => "C",
@@ -36,7 +36,7 @@ benchmark_code! { HighLevelSectorCode {
     U => "U",
 } }
 
-benchmark_code! { LowLevelSectorCode {
+benchmark_enum! { LowLevelSectorCode {
     Ll01 => "LL01",
     Ll02 => "LL02",
     Ll03 => "LL03",
@@ -127,7 +127,7 @@ benchmark_code! { LowLevelSectorCode {
     Ll99 => "LL99",
 } }
 
-benchmark_code! { Location {
+benchmark_enum! { Location {
     World => "WORLD",
     Africa => "AFRICA",
     Americas => "AMERICAS",
@@ -191,7 +191,7 @@ benchmark_code! { Location {
     UnitedStates => "UNITED_STATES",
 } }
 
-benchmark_code! { SectorGroup {
+benchmark_enum! { SectorGroup {
     Agriculture => "AGRICULTURE",
     Distribution => "DISTRIBUTION",
     Industry => "INDUSTRY",

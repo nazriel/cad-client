@@ -4,7 +4,7 @@
 //! benchmark. This module keeps that transport detail private: callers read and
 //! mutate one [`Benchmark`].
 
-mod codes;
+mod enums;
 
 use reqwest::Method;
 use schemars::JsonSchema;
@@ -20,7 +20,7 @@ use crate::{
 
 const BENCHMARKS_PATH: &str = "/api/benchmarks/v1/benchmarks";
 
-pub use codes::{HighLevelSectorCode, Location, LowLevelSectorCode, SectorGroup};
+pub use enums::{HighLevelSectorCode, Location, LowLevelSectorCode, SectorGroup};
 
 /// The company benchmark returned by CAD.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]

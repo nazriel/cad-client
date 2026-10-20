@@ -1,12 +1,42 @@
 use std::fmt;
 
 use chrono::NaiveDate;
+use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, de};
 
 use crate::ids::ReportingPeriodId;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// A reporting period returned by CAD.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+pub struct ReportingPeriod {
+    /// Stable reporting-period identifier.
+    #[schemars(with = "String")]
+    pub id: ReportingPeriodId,
+    /// Human-readable description.
+    pub description: String,
+    /// Short name displayed in compact UIs.
+    pub short_name: String,
+    /// Inclusive first day.
+    pub start_date: NaiveDate,
+    /// Inclusive last day.
+    pub end_date: NaiveDate,
+    /// Whether inventory mutations are disabled for the period.
+    pub is_locked: bool,
+}
+
+/// Aggregate information about a reporting period.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportingPeriodDetails {
+    /// Total number of emission entries in the period.
+    pub count_measurements: u64,
+    /// Total calculated emissions in kilograms of `CO₂e`, when available.
+    pub total_emissions_in_kg: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ReportingPeriodInput {
     description: String,
     short_name: String,
@@ -82,7 +112,7 @@ impl fmt::Display for ReportingPeriodInputError {
 impl std::error::Error for ReportingPeriodInputError {}
 
 /// Input for creating a reporting period.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(transparent)]
 pub struct ReportingPeriodCreate(ReportingPeriodInput);
 
@@ -147,7 +177,7 @@ impl<'de> Deserialize<'de> for ReportingPeriodCreate {
 }
 
 /// Complete replacement for a reporting period.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(transparent)]
 pub struct ReportingPeriodReplacement(ReportingPeriodInput);
 

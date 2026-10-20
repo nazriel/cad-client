@@ -62,8 +62,11 @@ async fn run(command: Command) -> assert_cmd::assert::Assert {
 fn help_lists_every_command_group_and_exits_zero() {
     let assert = cad_cli().arg("--help").assert().success();
     let stdout = predicate::str::contains("company")
+        .and(predicate::str::contains("activity-category"))
+        .and(predicate::str::contains("activity-group"))
         .and(predicate::str::contains("reporting-period"))
         .and(predicate::str::contains("inventory-line"))
+        .and(predicate::str::contains("organizational-unit"))
         .and(predicate::str::contains("document"))
         .and(predicate::str::contains("custom-field"))
         .and(predicate::str::contains("custom-option"))
@@ -90,6 +93,34 @@ fn generated_artefacts_need_no_credentials_or_server() {
         .stdout(predicate::str::starts_with(".ie \\n(.g"));
 
     let output = cad_cli()
+        .args(["schema", "activity-category"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let schema: serde_json::Value = serde_json::from_slice(&output).expect("schema output is JSON");
+    assert_eq!(schema["resource"], "activity-category");
+    assert_eq!(
+        schema["commands"]["update"]["input"]["properties"]["activityCategoryType"]["$ref"],
+        "#/$defs/ActivityCategoryType"
+    );
+
+    let output = cad_cli()
+        .args(["schema", "activity-group"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let schema: serde_json::Value = serde_json::from_slice(&output).expect("schema output is JSON");
+    assert_eq!(schema["resource"], "activity-group");
+    assert_eq!(
+        schema["commands"]["update"]["inputTransport"]["argument"],
+        "--input"
+    );
+
+    let output = cad_cli()
         .args(["schema", "benchmark"])
         .assert()
         .success()
@@ -99,6 +130,34 @@ fn generated_artefacts_need_no_credentials_or_server() {
     let schema: serde_json::Value = serde_json::from_slice(&output).expect("schema output is JSON");
     assert_eq!(schema["resource"], "benchmark");
     assert_eq!(schema["serverManagedFields"], serde_json::json!(["id"]));
+
+    let output = cad_cli()
+        .args(["schema", "reporting-period"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let schema: serde_json::Value = serde_json::from_slice(&output).expect("schema output is JSON");
+    assert_eq!(schema["resource"], "reporting-period");
+    assert_eq!(
+        schema["commands"]["create"]["inputTransport"]["argument"],
+        "--input"
+    );
+
+    let output = cad_cli()
+        .args(["schema", "organizational-unit"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let schema: serde_json::Value = serde_json::from_slice(&output).expect("schema output is JSON");
+    assert_eq!(schema["resource"], "organizational-unit");
+    assert_eq!(
+        schema["commands"]["duplicate"]["options"][0]["name"],
+        "--include-children"
+    );
 }
 
 #[test]

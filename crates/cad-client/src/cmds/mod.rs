@@ -1,5 +1,7 @@
 //! Command groups exposed by the CLI.
 
+pub mod activity_category;
+pub mod activity_group;
 pub mod benchmark;
 pub mod company;
 pub mod context;
@@ -8,6 +10,7 @@ pub mod custom_option;
 pub mod document;
 pub mod generate;
 pub mod inventory_line;
+pub mod organizational_unit;
 pub mod report;
 pub mod reporting_period;
 pub mod schema;
@@ -23,6 +26,10 @@ use crate::support::terminal::Terminal;
 /// Top-level `cad-cli` command.
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Manage the company's activity categories.
+    ActivityCategory(activity_category::Group),
+    /// Manage the company's activity groups.
+    ActivityGroup(activity_group::Group),
     /// Read and update the company benchmark.
     Benchmark(benchmark::Group),
     /// Show the authenticated session context.
@@ -33,6 +40,8 @@ pub enum Command {
     ReportingPeriod(reporting_period::Group),
     /// Read and mutate inventory lines.
     InventoryLine(inventory_line::Group),
+    /// Manage the company's organizational units.
+    OrganizationalUnit(organizational_unit::Group),
     /// Upload and download supporting documents.
     Document(document::Group),
     /// Manage custom fields.
@@ -52,6 +61,10 @@ pub enum Command {
 impl Command {
     pub(crate) fn into_invocation(self) -> Invocation {
         match self {
+            Self::ActivityCategory(group) => {
+                Invocation::Online(OnlineCommand::ActivityCategory(group))
+            }
+            Self::ActivityGroup(group) => Invocation::Online(OnlineCommand::ActivityGroup(group)),
             Self::Benchmark(group) => Invocation::Online(OnlineCommand::Benchmark(group)),
             Self::Context(group) => Invocation::Online(OnlineCommand::Context(group)),
             Self::Company(group) => Invocation::Online(OnlineCommand::Company(group)),
@@ -59,6 +72,9 @@ impl Command {
                 Invocation::Online(OnlineCommand::ReportingPeriod(group))
             }
             Self::InventoryLine(group) => Invocation::Online(OnlineCommand::InventoryLine(group)),
+            Self::OrganizationalUnit(group) => {
+                Invocation::Online(OnlineCommand::OrganizationalUnit(group))
+            }
             Self::Document(group) => Invocation::Online(OnlineCommand::Document(group)),
             Self::CustomField(group) => Invocation::Online(OnlineCommand::CustomField(group)),
             Self::CustomOption(group) => Invocation::Online(OnlineCommand::CustomOption(group)),
@@ -107,11 +123,14 @@ impl OfflineCommand {
 /// client or an `SdkAdapter` cannot be run without scoping, because scoping is
 /// the only way to obtain either.
 pub(crate) enum OnlineCommand {
+    ActivityCategory(activity_category::Group),
+    ActivityGroup(activity_group::Group),
     Benchmark(benchmark::Group),
     Context(context::Group),
     Company(company::Group),
     ReportingPeriod(reporting_period::Group),
     InventoryLine(inventory_line::Group),
+    OrganizationalUnit(organizational_unit::Group),
     Document(document::Group),
     CustomField(custom_field::Group),
     CustomOption(custom_option::Group),
@@ -125,6 +144,12 @@ impl OnlineCommand {
         platform: &Platform,
     ) -> Result<Value, CliError> {
         match self {
+            Self::ActivityCategory(group) => {
+                group.run(context, platform.scoped().await?.client()).await
+            }
+            Self::ActivityGroup(group) => {
+                group.run(context, platform.scoped().await?.client()).await
+            }
             Self::Benchmark(group) => group.run(context, platform.scoped().await?.client()).await,
             // Session-level commands neither prompt nor read local input, so
             // they ignore the [`CommandContext`].
@@ -136,6 +161,9 @@ impl OnlineCommand {
             Self::Company(group) => group.run(platform.connected()).await,
             Self::ReportingPeriod(group) => group.run(context, &platform.scoped().await?).await,
             Self::InventoryLine(group) => {
+                group.run(context, platform.scoped().await?.client()).await
+            }
+            Self::OrganizationalUnit(group) => {
                 group.run(context, platform.scoped().await?.client()).await
             }
             Self::Document(group) => {

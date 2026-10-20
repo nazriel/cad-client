@@ -178,6 +178,128 @@ are case-sensitive; inspect `cad-cli schema benchmark` for the complete
 example, `"C"` and `"DENMARK"` are valid. `sectorGroup` appears only in
 responses.
 
+## Reporting periods
+
+Reporting periods are a collection. Inspect the credential-free CLI contract
+before automating writes:
+
+```console
+cad-cli reporting-period --help
+cad-cli reporting-period create --help
+cad-cli schema reporting-period > reporting-period-cli-schema.json
+```
+
+List periods or read one period as JSON:
+
+```console
+cad-cli --output json reporting-period list
+cad-cli --output json reporting-period get 00000000-0000-0000-0000-000000000001
+```
+
+Create a period from a JSON file or stdin. `update` takes the reporting-period
+UUID as its first argument and receives the same ID-free JSON object; the CLI
+puts that UUID into the API request body where the platform requires it.
+
+```console
+cad-cli --output json reporting-period create --input reporting-period.json
+printf '%s' '{"description":"Financial year 2026","shortName":"FY26","startDate":"2026-01-01","endDate":"2026-12-31","isLocked":false}' | \
+  cad-cli --output json reporting-period create --input -
+cad-cli --output json reporting-period update 00000000-0000-0000-0000-000000000001 --input reporting-period.json
+```
+
+Every write requires `description`, `shortName`, `startDate`, `endDate`, and
+`isLocked`. Dates use ISO 8601 `YYYY-MM-DD` and are inclusive; `shortName` is
+at most six characters; `startDate` cannot be later than `endDate`. The server
+assigns `id`, so it must not be supplied in input. Use `details` for aggregate
+measurement/emissions data. `duplicate --input request.json [--wait]` starts a
+copy job; its input extends the create object with `duplicatedReportingPeriodId`
+and the required booleans `duplicateEntries`, `duplicateNotes`, and
+`duplicateAttachments`. Poll an existing job with `duplication-status <id>`.
+
+## Activity categories
+
+Activity categories describe the sources included in the company inventory. Inspect
+the credential-free contract before automating writes:
+
+```console
+cad-cli activity-category --help
+cad-cli schema activity-category > activity-category-cli-schema.json
+```
+
+List categories, update one from stdin, or duplicate an existing category:
+
+```console
+cad-cli --output json activity-category list
+printf '%s' '{"name":"Purchased Electricity","description":"Electricity purchased for operations.","inclusionCriteria":"Includes purchased electricity.","exclusionCriteria":"Excludes onsite generation.","activityCategoryType":"PURCHASED_ELECTRICITY","activityGroupName":"Scope 2","activityGroupId":"00000000-0000-0000-0000-000000000001","position":0,"isIncluded":true}' | \
+  cad-cli --output json activity-category update 00000000-0000-0000-0000-000000000002 --input -
+cad-cli --output json activity-category duplicate 00000000-0000-0000-0000-000000000002
+```
+
+Writes require the category name, description, inclusion and exclusion criteria,
+`activityCategoryType`, parent `activityGroupId`, zero-based `position`, and
+`isIncluded`. `activityGroupName` is optional. Category names are limited to 128
+characters. The deprecated API create route is intentionally not exposed by the
+CLI. The platform returns server-managed fields such as `id`, measurement counts,
+default status, and scope/reference metadata. `delete <id>` asks for confirmation
+unless `--yes` is supplied.
+
+## Activity groups
+
+Activity groups organize activity categories, such as Scope 1 and Scope 2. Inspect
+the credential-free CLI contract before automating writes:
+
+```console
+cad-cli activity-group --help
+cad-cli schema activity-group > activity-group-cli-schema.json
+```
+
+List groups or create and update one with an ID-free JSON object:
+
+```console
+cad-cli --output json activity-group list
+printf '%s' '{"position":0,"name":"Scope 1","description":"Direct emissions from owned sources."}' | \
+  cad-cli --output json activity-group create --input -
+cad-cli --output json activity-group update 00000000-0000-0000-0000-000000000001 --input activity-group.json
+```
+
+Every write requires a zero-based non-negative `position`, a `name` of at most
+128 characters, and a `description`. The platform assigns the `id` returned by
+create and update; it must not be included in input. `delete <id>` asks for
+confirmation unless `--yes` is supplied.
+
+## Organizational units
+
+Organizational units form the company hierarchy. Inspect the credential-free
+contract before creating or moving a unit:
+
+```console
+cad-cli organizational-unit --help
+cad-cli schema organizational-unit > organizational-unit-cli-schema.json
+```
+
+List the hierarchy, inspect one unit, or count its assigned inventory entries:
+
+```console
+cad-cli --output json organizational-unit list
+cad-cli --output json organizational-unit get 00000000-0000-0000-0000-000000000001
+cad-cli --output json organizational-unit count-entries 00000000-0000-0000-0000-000000000001
+```
+
+Create or update a unit using an ID-free JSON object. `parentId` is required on
+writes and identifies the parent organizational-unit UUID. The server provides
+the new unit's `id` in the response; it must not be included in input.
+
+```console
+printf '%s' '{"name":"Operations","position":0,"parentId":"00000000-0000-0000-0000-000000000001"}' | \
+  cad-cli --output json organizational-unit create --input -
+cad-cli --output json organizational-unit update 00000000-0000-0000-0000-000000000002 --input unit.json
+```
+
+`name` is limited to 255 characters and `position` is a zero-based non-negative
+sibling order. `duplicate <id> --include-children` returns the duplicated unit
+or units; omit the flag to duplicate only the selected unit. `delete <id>` asks
+for confirmation unless `--yes` is supplied.
+
 ## Shell completions and manual page
 
 Both are generated from the command definition itself, so they never drift from

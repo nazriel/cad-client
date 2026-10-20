@@ -4,8 +4,9 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::{
-    DuplicationOptions, ReportingPeriodCreate, ReportingPeriodDuplicate, ReportingPeriodInputError,
-    ReportingPeriodReplacement, requests,
+    DUPLICATION_PATH, DUPLICATION_STATUS_PATH, DuplicationOptions, REPORTING_PERIOD_DETAILS_SUFFIX,
+    REPORTING_PERIODS_PATH, ReportingPeriodCreate, ReportingPeriodDuplicate,
+    ReportingPeriodInputError, ReportingPeriodReplacement, requests,
 };
 use crate::ids::{DuplicationStatusId, ReportingPeriodId};
 
@@ -30,6 +31,21 @@ fn create_serializes_with_camel_case_contract() {
             "isLocked": false
         })
     );
+}
+
+#[test]
+fn input_rejects_unknown_fields() {
+    let error = serde_json::from_value::<ReportingPeriodCreate>(json!({
+        "description": "FY 2026",
+        "shortName": "FY26",
+        "startDate": "2026-01-01",
+        "endDate": "2026-12-31",
+        "isLocked": false,
+        "id": Uuid::nil()
+    }))
+    .expect_err("the CLI input must not accept a server-managed id");
+
+    assert!(error.to_string().contains("unknown field"));
 }
 
 #[test]
@@ -81,24 +97,31 @@ fn request_recipes_define_the_reporting_period_http_contract_once() {
 
     let list = requests::list();
     assert_eq!(list.method, Method::GET);
-    assert_eq!(list.path, requests::REPORTING_PERIODS_PATH);
+    assert_eq!(list.path, REPORTING_PERIODS_PATH);
 
     let get = requests::get(reporting_period_id);
     assert_eq!(get.method, Method::GET);
     assert_eq!(
         get.path,
-        format!("{}/{reporting_period_id}", requests::REPORTING_PERIODS_PATH)
+        format!("{REPORTING_PERIODS_PATH}/{reporting_period_id}")
+    );
+
+    let details = requests::details(reporting_period_id);
+    assert_eq!(details.method, Method::GET);
+    assert_eq!(
+        details.path,
+        format!("{REPORTING_PERIODS_PATH}/{reporting_period_id}/{REPORTING_PERIOD_DETAILS_SUFFIX}")
     );
 
     let create = requests::create(&create_input);
     assert_eq!(create.method, Method::POST);
-    assert_eq!(create.path, requests::REPORTING_PERIODS_PATH);
+    assert_eq!(create.path, REPORTING_PERIODS_PATH);
 
     let replace = requests::replace(reporting_period_id, &replacement);
     assert_eq!(replace.method, Method::PUT);
     assert_eq!(
         replace.path,
-        format!("{}/{reporting_period_id}", requests::REPORTING_PERIODS_PATH)
+        format!("{REPORTING_PERIODS_PATH}/{reporting_period_id}")
     );
     assert_eq!(
         serde_json::to_value(replace.body.expect("replace has a body"))
@@ -110,20 +133,17 @@ fn request_recipes_define_the_reporting_period_http_contract_once() {
     assert_eq!(delete.method, Method::DELETE);
     assert_eq!(
         delete.path,
-        format!("{}/{reporting_period_id}", requests::REPORTING_PERIODS_PATH)
+        format!("{REPORTING_PERIODS_PATH}/{reporting_period_id}")
     );
 
     let duplicate = requests::duplicate(&duplicate_input);
     assert_eq!(duplicate.method, Method::POST);
-    assert_eq!(duplicate.path, requests::DUPLICATION_PATH);
+    assert_eq!(duplicate.path, DUPLICATION_PATH);
 
     let duplication_status = requests::duplication_status(duplication_status_id);
     assert_eq!(duplication_status.method, Method::GET);
     assert_eq!(
         duplication_status.path,
-        format!(
-            "{}/{duplication_status_id}",
-            requests::DUPLICATION_STATUS_PATH
-        )
+        format!("{DUPLICATION_STATUS_PATH}/{duplication_status_id}")
     );
 }

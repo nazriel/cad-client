@@ -22,17 +22,18 @@ A complete domain addition must:
 
 ## Repository Layout
 
-| Responsibility                    | Location                                                           |
-| --------------------------------- | ------------------------------------------------------------------ |
-| Latest endpoint contract          | `openapi/openapi_current.json`                                     |
-| Typed API domain                  | `crates/cad-api/src/domains/<domain>.rs` or `domains/<domain>/`    |
-| Domain registration               | `crates/cad-api/src/domains/mod.rs`                                |
-| Resource IDs                      | `crates/cad-api/src/ids.rs`                                        |
-| Top-level command group           | `crates/cad-client/src/cmds/<domain>.rs` or `cmds/<domain>/mod.rs` |
-| Command registration and dispatch | `crates/cad-client/src/cmds/mod.rs`                                |
-| CLI integration tests             | `crates/cad-client/src/app/tests.rs`                               |
-| Domain request/model tests        | beside the API domain module                                       |
-| Offline CLI schema registry       | `crates/cad-client/src/cmds/schema.rs`                             |
+| Responsibility                    | Location                                         |
+| --------------------------------- | ------------------------------------------------ |
+| Latest endpoint contract          | `openapi/openapi_current.json`                   |
+| Typed API domain                  | `crates/cad-api/src/domains/<plural>/mod.rs`     |
+| Domain request/model tests        | `crates/cad-api/src/domains/<plural>/tests.rs`   |
+| Domain registration               | `crates/cad-api/src/domains/mod.rs`              |
+| Resource IDs                      | `crates/cad-api/src/ids.rs`                      |
+| Top-level command group           | `crates/cad-client/src/cmds/<singular>/mod.rs`   |
+| Command-local/schema tests        | `crates/cad-client/src/cmds/<singular>/tests.rs` |
+| Command registration and dispatch | `crates/cad-client/src/cmds/mod.rs`              |
+| CLI integration tests             | `crates/cad-client/src/app/tests.rs`             |
+| Offline CLI schema registry       | `crates/cad-client/src/cmds/schema.rs`           |
 
 Useful reference implementations:
 
@@ -101,7 +102,14 @@ Avoid adding commands merely because CRUD is conventional. For example, do not a
 
 ### 3. Implement request recipes in `cad-api`
 
-Keep HTTP details in a `requests` module or domain request file:
+New or materially changed SDK domains use `domains/<plural>/mod.rs` as the
+public entry point. It owns the scoped handle, normalized route constants, and
+private request recipes; add `#[cfg(test)] mod tests;` for the sibling
+`tests.rs`. Use a descriptive helper module only for a real boundary such as
+resource models/validation or an asynchronous capability—never generic
+`models.rs`, `input.rs`, `api.rs`, or `requests.rs`.
+
+Keep HTTP details in a private `requests` module beside the handle:
 
 - define `/api/`-prefixed path constants once, normalizing OpenAPI paths as described above;
 - use `RequestSpec` with the exact `reqwest::Method`;
@@ -113,7 +121,11 @@ Use public rustdoc for every public `Result` method, including an `# Errors` sec
 
 ### 4. Add CLI commands
 
-Create a group with Clap `Args` and `Subcommand` in `crates/cad-client/src/cmds/<domain>.rs`:
+New or materially changed CLI groups use
+`crates/cad-client/src/cmds/<singular>/mod.rs`. Keep command-local and schema
+unit tests in a sibling `tests.rs`, declared with `#[cfg(test)] mod tests;`.
+
+Create the group with Clap `Args` and `Subcommand`:
 
 ```rust
 #[derive(Debug, Args)]
@@ -364,8 +376,8 @@ Document required JSON fields, nullable fields, enum spellings, units, date form
 
 At minimum, add:
 
-1. **API request-recipe test**: assert method, exact path, and serialized request body.
-2. **Model/input test**: validate relevant local invariants or exact JSON casing.
+1. **SDK `tests.rs` request-recipe test**: assert method, exact path, and serialized request body.
+2. **SDK `tests.rs` model/input test**: validate relevant local invariants or exact JSON casing.
 3. **CLI integration test**: mock identity and the domain route, run real Clap parsing and dispatch, then assert JSON stdout and request sequence.
 
 For a singleton whose server endpoint returns `[resource]`, the integration test must assert that `cad-cli --output json <domain> read` produces a JSON object, not an array.
@@ -391,6 +403,6 @@ Run Clippy if the repository baseline permits it. Report pre-existing warnings s
 - [ ] JSON input/output behavior verified for LLM use.
 - [ ] Offline `cad-cli schema <domain>` document generated from the command's Rust input/output types, ID-safe, and tested without credentials.
 - [ ] The delivered schema does not read `openapi_current.json` or a hand-maintained schema artifact.
-- [ ] Contract and integration tests added.
+- [ ] SDK `tests.rs`, command `tests.rs`, and integration tests added.
 - [ ] `fmt`, relevant tests, and command help validated.
 - [ ] README/domain documentation includes JSON examples and input schema guidance.
