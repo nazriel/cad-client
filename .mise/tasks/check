@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+#MISE description="Everything CI checks on a pull request: lint, doc and test"
+#MISE depends=["lint", "doc", "test"]

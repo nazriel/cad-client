@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Run every linter from hk.pkl on all files: rustfmt, Clippy, cargo-deny, workflow and shell checks"
+set -euo pipefail
+
+hk check --all
