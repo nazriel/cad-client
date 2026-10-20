@@ -1,0 +1,33 @@
+version: 2
+
+# Security updates (enabled in the repository settings) open as soon as an
+# advisory lands and ignore the schedule and cooldown below. These entries are
+# the routine version updates, grouped to one PR per ecosystem.
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    # Let a release sit for a week before proposing it, so a compromised or
+    # broken publish is usually yanked first.
+    cooldown:
+      default-days: 7
+    groups:
+      cargo:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: deps
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
