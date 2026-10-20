@@ -1,6 +1,5 @@
 use std::fmt;
 
-use chrono::{DateTime, Utc};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -40,22 +39,6 @@ impl fmt::Debug for ApiKeyV2Credentials {
             .field("secret", &"[REDACTED]")
             .finish()
     }
-}
-
-/// A company visible to the authenticated user.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-#[non_exhaustive]
-pub struct Company {
-    pub id: CompanyId,
-    pub name: Option<String>,
-    pub display_name: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub is_consulting_company: bool,
-    pub is_demo_company: bool,
-    pub available_client_companies: Option<u64>,
-    #[serde(rename = "companyStatus")]
-    pub status: String,
 }
 
 /// Machine identity and resolved company context returned by the platform.

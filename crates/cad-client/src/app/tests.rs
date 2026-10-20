@@ -6,11 +6,12 @@
 //! with fakes. Black-box coverage of the shipped binary lives in `tests/cli.rs`.
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::sync::Mutex;
 
 use clap::CommandFactory;
 use uuid::Uuid;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{body_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use super::{Cli, FromArgMatches, check_local_inputs, execute};
@@ -23,6 +24,7 @@ use crate::support::terminal::{Progress, StatusKind, Terminal};
 const COMPANY_ID: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0042);
 const IDENTITY_PATH: &str = "/api/auth/v2/machine/identity";
 const COMPANIES_PATH: &str = "/api/accounts/v1/companies";
+const COMPANY_TEMPLATES_PATH: &str = "/api/accounts/v1/template-companies";
 const BENCHMARKS_PATH: &str = "/api/benchmarks/v1/benchmarks";
 const ACTIVITY_CATEGORIES_PATH: &str = "/api/activities/v1/activity-categories";
 const ACTIVITY_GROUPS_PATH: &str = "/api/activities/v1/activity-groups";
@@ -50,6 +52,7 @@ struct FakeTerminal {
     stdout: Mutex<Vec<u8>>,
     status: Mutex<Vec<(StatusKind, String)>>,
     progress: Mutex<Vec<String>>,
+    confirmations: Mutex<Vec<String>>,
     interactive: bool,
 }
 
@@ -61,6 +64,13 @@ impl FakeTerminal {
 
     fn statuses(&self) -> Vec<(StatusKind, String)> {
         self.status.lock().expect("status lock").clone()
+    }
+
+    fn confirmations(&self) -> Vec<String> {
+        self.confirmations
+            .lock()
+            .expect("confirmation lock")
+            .clone()
     }
 }
 
@@ -78,7 +88,11 @@ impl Terminal for FakeTerminal {
         Ok(())
     }
 
-    fn confirm(&self, _prompt: &str, assume_yes: bool) -> Result<(), CliError> {
+    fn confirm(&self, prompt: &str, assume_yes: bool) -> Result<(), CliError> {
+        self.confirmations
+            .lock()
+            .expect("confirmation lock")
+            .push(prompt.to_owned());
         if assume_yes {
             return Ok(());
         }
@@ -86,7 +100,7 @@ impl Terminal for FakeTerminal {
             return Ok(());
         }
         Err(CliError::Input(
-            "destructive operations outside a TTY require --yes".to_owned(),
+            "operations that require confirmation outside a TTY require --yes".to_owned(),
         ))
     }
 
@@ -251,6 +265,202 @@ async fn company_list_renders_the_server_payload_as_json() {
         terminal.statuses(),
         [(StatusKind::Success, "1 result".to_owned())]
     );
+}
+
+#[tokio::test]
+async fn company_create_confirms_the_invoice_impact_before_posting() {
+    let server = mock_server().await;
+    let template_id = Uuid::from_u128(0x43);
+    Mock::given(method("POST"))
+        .and(path(COMPANIES_PATH))
+        .and(body_json(serde_json::json!({
+            "name": "Acme GmbH",
+            "template": "TEMPLATE_COMPANY",
+            "companyTemplateId": template_id
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": COMPANY_ID,
+            "name": "Acme GmbH",
+            "displayName": "Acme GmbH",
+            "createdAt": "2026-01-01T00:00:00Z",
+            "isConsultingCompany": false,
+            "isDemoCompany": false,
+            "availableClientCompanies": null,
+            "companyStatus": "ACTIVE"
+        })))
+        .mount(&server)
+        .await;
+    let mut input = tempfile::NamedTempFile::new().expect("temporary company input");
+    writeln!(
+        input,
+        "{{\"name\":\"Acme GmbH\",\"template\":\"TEMPLATE_COMPANY\",\"companyTemplateId\":\"{template_id}\"}}"
+    )
+    .expect("write company input");
+    let input_path = input.path().to_str().expect("UTF-8 input path");
+    let terminal = FakeTerminal {
+        interactive: true,
+        ..Default::default()
+    };
+
+    run_cli(
+        &[
+            "cad-cli",
+            "--server-url",
+            &server.uri(),
+            "--allow-insecure-http",
+            "--output",
+            "json",
+            "company",
+            "create",
+            "--input",
+            input_path,
+        ],
+        &credentials(),
+        &terminal,
+    )
+    .await
+    .expect("confirmed company creation should succeed");
+
+    assert_eq!(
+        request_paths(&server).await,
+        [
+            format!("GET {IDENTITY_PATH}"),
+            format!("POST {COMPANIES_PATH}")
+        ]
+    );
+    assert_eq!(
+        terminal.confirmations(),
+        ["Creating a company may affect your next invoice. Continue?"]
+    );
+    let rendered: serde_json::Value =
+        serde_json::from_str(&terminal.stdout()).expect("stdout is JSON");
+    assert_eq!(rendered["name"], "Acme GmbH");
+}
+
+#[tokio::test]
+async fn company_create_outside_a_tty_requires_yes_before_posting() {
+    let server = mock_server().await;
+    let mut input = tempfile::NamedTempFile::new().expect("temporary company input");
+    writeln!(input, "{{\"name\":\"Acme GmbH\"}}").expect("write company input");
+    let input_path = input.path().to_str().expect("UTF-8 input path");
+    let terminal = FakeTerminal::default();
+
+    let error = run_cli(
+        &[
+            "cad-cli",
+            "--server-url",
+            &server.uri(),
+            "--allow-insecure-http",
+            "company",
+            "create",
+            "--input",
+            input_path,
+        ],
+        &credentials(),
+        &terminal,
+    )
+    .await
+    .expect_err("non-interactive company creation needs --yes");
+
+    assert!(error.to_string().contains("require confirmation"));
+    assert_eq!(
+        request_paths(&server).await,
+        [format!("GET {IDENTITY_PATH}")]
+    );
+}
+
+#[tokio::test]
+async fn company_create_with_yes_posts_without_an_interactive_terminal() {
+    let server = mock_server().await;
+    Mock::given(method("POST"))
+        .and(path(COMPANIES_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": COMPANY_ID,
+            "name": "Acme GmbH",
+            "displayName": "Acme GmbH",
+            "createdAt": "2026-01-01T00:00:00Z",
+            "isConsultingCompany": false,
+            "isDemoCompany": false,
+            "availableClientCompanies": null,
+            "companyStatus": "ACTIVE"
+        })))
+        .mount(&server)
+        .await;
+    let mut input = tempfile::NamedTempFile::new().expect("temporary company input");
+    writeln!(input, "{{\"name\":\"Acme GmbH\"}}").expect("write company input");
+    let input_path = input.path().to_str().expect("UTF-8 input path");
+    let terminal = FakeTerminal::default();
+
+    run_cli(
+        &[
+            "cad-cli",
+            "--server-url",
+            &server.uri(),
+            "--allow-insecure-http",
+            "--yes",
+            "company",
+            "create",
+            "--input",
+            input_path,
+        ],
+        &credentials(),
+        &terminal,
+    )
+    .await
+    .expect("--yes should permit non-interactive company creation");
+
+    assert_eq!(
+        request_paths(&server).await,
+        [
+            format!("GET {IDENTITY_PATH}"),
+            format!("POST {COMPANIES_PATH}")
+        ]
+    );
+}
+
+#[tokio::test]
+async fn company_template_list_renders_the_server_payload_as_json() {
+    let server = mock_server().await;
+    let template_id = Uuid::from_u128(0x43);
+    Mock::given(method("GET"))
+        .and(path(COMPANY_TEMPLATES_PATH))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!([{
+                "id": template_id,
+                "name": "Consulting template",
+                "displayName": "Consulting template",
+                "createdAt": "2026-01-01T00:00:00Z",
+                "isConsultingCompany": true,
+                "isDemoCompany": false,
+                "availableClientCompanies": null,
+                "companyStatus": "ACTIVE",
+                "templateDescription": "Prepared consulting configuration"
+            }])),
+        )
+        .mount(&server)
+        .await;
+    let terminal = FakeTerminal::default();
+
+    run_cli(
+        &[
+            "cad-cli",
+            "--server-url",
+            &server.uri(),
+            "--allow-insecure-http",
+            "--output",
+            "json",
+            "company-template",
+            "list",
+        ],
+        &credentials(),
+        &terminal,
+    )
+    .await
+    .expect("company template list should succeed");
+
+    let rendered: serde_json::Value =
+        serde_json::from_str(&terminal.stdout()).expect("stdout is JSON");
+    assert_eq!(rendered[0]["id"], template_id.to_string());
 }
 
 #[tokio::test]

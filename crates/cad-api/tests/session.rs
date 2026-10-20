@@ -55,6 +55,7 @@ async fn machine_key_authenticates_identity_and_resource_requests() {
         .expect("machine identity succeeds");
     connected
         .companies()
+        .list()
         .await
         .expect("companies request succeeds");
 

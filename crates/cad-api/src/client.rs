@@ -1,8 +1,8 @@
 use std::{fmt, sync::Arc};
 
 use crate::{
-    ApiKeyV2Credentials, Company, Error, Result, ServerConfig, SessionContext, ids::CompanyId,
-    protocol::companies, transport::Transport,
+    ApiKeyV2Credentials, Error, Result, ServerConfig, SessionContext, ids::CompanyId,
+    transport::Transport,
 };
 
 pub(crate) use crate::transport::ClientCore;
@@ -78,8 +78,9 @@ impl Authenticated for CompanyScoped {
 
 /// An asynchronous, typestate-driven CAD API client.
 ///
-/// The state markers cannot be constructed by callers. Resource capabilities
-/// exist only for [`Client<CompanyScoped>`].
+/// The state markers cannot be constructed by callers. Session-level resource
+/// capabilities require [`Client<Connected>`], while company resources require
+/// [`Client<CompanyScoped>`].
 ///
 /// ```compile_fail
 /// use cad_api::{Client, Disconnected};
@@ -186,15 +187,6 @@ impl Client<Disconnected> {
     reason = "the bound seals the authenticated state set; it is deliberately not nameable"
 )]
 impl<State: Authenticated> Client<State> {
-    /// Returns companies visible to the current user.
-    ///
-    /// # Errors
-    ///
-    /// Returns an authentication, transport, protocol, or API error.
-    pub async fn companies(&self) -> Result<Vec<Company>> {
-        self.state.core().execute(companies()).await
-    }
-
     /// Returns the machine identity context established during connection.
     pub fn context(&self) -> SessionContext {
         self.state.core().session_context()
@@ -227,6 +219,10 @@ impl<State: Authenticated> Client<State> {
 }
 
 impl Client<Connected> {
+    pub(crate) const fn core(&self) -> &ClientCore {
+        &self.state.core
+    }
+
     /// Consumes this client and binds it to the company resolved for its machine key.
     ///
     /// # Errors

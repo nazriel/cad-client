@@ -24,4 +24,4 @@ Read [`docs/architecture.md`](docs/architecture.md) before changing application 
 - Use typed `serde` models and `schemars::JsonSchema` for externally supplied or returned JSON. Generate `cad-cli schema <domain>` from the exact CLI input/output types and add metadata only for behavior types cannot express.
 - Do not add conventional CRUD commands that the API does not support. For singleton resources, expose `read`, `create`, and/or `update` as appropriate and hide collection wrappers and server-owned IDs.
 - Validate focused tests first, then run `./scripts/check.sh` for cross-cutting changes.
-- Before every commit, run the local quality gateway: `mise run lint`.
+- Before every commit, run the local quality gateway: `mise run lint`, then `mise run audit --online`.

@@ -1,13 +1,16 @@
-//! Company-scoped Carbon+Alt+Delete API capabilities.
+//! Carbon+Alt+Delete API capabilities.
 //!
-//! Every handle in this module can only be obtained from a
-//! [`Client<CompanyScoped>`](crate::Client). This keeps authentication and
-//! company selection in the type system while the individual handles keep the
-//! HTTP details local to their domain.
+//! Each handle is available only from the client state required by its service:
+//! session-level capabilities use [`Client<Connected>`](crate::Client), while
+//! company resources use [`Client<CompanyScoped>`](crate::Client). This keeps
+//! authentication and company selection in the type system while individual
+//! handles keep HTTP details local to their domain.
 
 pub mod activity_categories;
 pub mod activity_groups;
 pub mod benchmarks;
+pub mod companies;
+pub mod company_templates;
 pub mod custom_fields;
 pub mod custom_options;
 pub mod documents;

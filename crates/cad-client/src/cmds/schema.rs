@@ -28,6 +28,10 @@ enum Command {
     ActivityCategory,
     /// Print the CLI schema for company activity groups.
     ActivityGroup,
+    /// Print the CLI schema for session-level companies.
+    Company,
+    /// Print the CLI schema for reusable session-level company templates.
+    CompanyTemplate,
     /// Print the CLI schema for the singleton company benchmark.
     Benchmark,
     /// Print the CLI schema for company reporting periods.
@@ -42,6 +46,8 @@ impl Group {
             Command::List => list_schema(),
             Command::ActivityCategory => super::activity_category::schema(),
             Command::ActivityGroup => super::activity_group::schema(),
+            Command::Company => super::company::schema(),
+            Command::CompanyTemplate => super::company_template::schema(),
             Command::Benchmark => super::benchmark::schema(),
             Command::ReportingPeriod => super::reporting_period::schema(),
             Command::OrganizationalUnit => super::organizational_unit::schema(),
@@ -64,6 +70,14 @@ fn list_schema() -> Value {
             "name": "activity-group",
             "cardinality": "collection",
             "commands": ["list", "create", "update", "delete"]
+        }, {
+            "name": "company",
+            "cardinality": "collection",
+            "commands": ["list", "create"]
+        }, {
+            "name": "company-template",
+            "cardinality": "collection",
+            "commands": ["list"]
         }, {
             "name": "benchmark",
             "cardinality": "singleton",
@@ -97,6 +111,16 @@ mod tests {
             resources
                 .iter()
                 .any(|resource| resource["name"] == "activity-group")
+        );
+        assert!(
+            resources
+                .iter()
+                .any(|resource| resource["name"] == "company")
+        );
+        assert!(
+            resources
+                .iter()
+                .any(|resource| resource["name"] == "company-template")
         );
         assert!(
             resources
