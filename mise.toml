@@ -1,5 +1,10 @@
 min_version = "2026.9.2"
 
+[settings]
+# Every runner the workflows use, windows-arm64 included: CI installs in
+# locked mode, so a platform missing here fails the job.
+lockfile_platforms = ["linux-x64", "linux-arm64", "linux-x64-musl", "linux-arm64-musl", "macos-arm64", "macos-x64", "windows-x64", "windows-arm64"]
+
 [tools]
 rust = { version = "1.99.1", profile = "minimal", components = "clippy,rustfmt", mr_boxington = true }
 mr-boxington = "1.25.0"
