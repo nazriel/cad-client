@@ -171,13 +171,12 @@ sector/location code:
 ```
 
 `reportingPeriodId` and `grossAnnualRevenueUnitId` are platform UUIDs.
-The platform validates positive `fullTimeEmployees` and `grossAnnualRevenue`
-values when present; `grossAnnualRevenue` is expressed in the selected revenue
-unit. Enum spellings
+`fullTimeEmployees` and `grossAnnualRevenue` must be positive when present;
+`grossAnnualRevenue` is expressed in the selected revenue unit. Enum spellings
 are case-sensitive; inspect `cad-cli schema benchmark` for the complete
 `HighLevelSectorCode`, `LowLevelSectorCode`, and `Location` value sets. For
-example, `"C"` and `"DENMARK"` are valid. `sectorGroup` is derived by the
-platform and appears only in responses.
+example, `"C"` and `"DENMARK"` are valid. `sectorGroup` appears only in
+responses.
 
 ## Shell completions and manual page
 
