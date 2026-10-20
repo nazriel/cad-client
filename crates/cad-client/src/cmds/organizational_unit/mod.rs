@@ -13,6 +13,7 @@ use serde_json::{Map, Value, json};
 
 use crate::app::context::CommandContext;
 use crate::cli::args::{IdArgs, IdInputArgs, InputArgs};
+use crate::cli::help::{self, Example};
 use crate::error::CliError;
 use crate::output::to_value;
 
@@ -23,21 +24,75 @@ pub struct Group {
     pub(crate) command: Command,
 }
 
+const LIST_EXAMPLES: &[Example] = &[Example::new(
+    "cad-cli organizational-unit list",
+    "List the organizational units of the company",
+)];
+
+const GET_EXAMPLES: &[Example] = &[Example::new(
+    "cad-cli organizational-unit get 00000000-0000-0000-0000-000000000001",
+    "Show one organizational unit",
+)];
+
+const CREATE_EXAMPLES: &[Example] = &[Example::new(
+    "cad-cli organizational-unit create --input unit.json",
+    "Create an organizational unit from a file",
+)];
+
+const UPDATE_EXAMPLES: &[Example] = &[Example::new(
+    "cad-cli organizational-unit update 00000000-0000-0000-0000-000000000001 --input unit.json",
+    "Update an organizational unit from a file",
+)];
+
+const DELETE_EXAMPLES: &[Example] = &[
+    Example::new(
+        "cad-cli organizational-unit delete 00000000-0000-0000-0000-000000000001",
+        "Delete an organizational unit after a confirmation prompt",
+    ),
+    Example::new(
+        "cad-cli organizational-unit delete 00000000-0000-0000-0000-000000000001 --yes",
+        "Delete without prompting, e.g. from a script",
+    ),
+];
+
+const COUNT_ENTRIES_EXAMPLES: &[Example] = &[Example::new(
+    "cad-cli organizational-unit count-entries 00000000-0000-0000-0000-000000000001",
+    "Count the inventory entries assigned to a unit",
+)];
+
+const DUPLICATE_EXAMPLES: &[Example] = &[
+    Example::new(
+        "cad-cli organizational-unit duplicate 00000000-0000-0000-0000-000000000001",
+        "Copy one organizational unit",
+    ),
+    Example::new(
+        "cad-cli organizational-unit duplicate 00000000-0000-0000-0000-000000000001 --include-children",
+        "Copy a unit together with all its descendants",
+    ),
+];
+
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     /// List organizational units for the selected company.
+    #[command(after_long_help = help::examples(LIST_EXAMPLES))]
     List,
     /// Get one organizational unit.
+    #[command(after_long_help = help::examples(GET_EXAMPLES))]
     Get(IdArgs<OrganizationalUnitId>),
     /// Create an organizational unit from JSON --input <file|-> and return it.
+    #[command(after_long_help = help::examples(CREATE_EXAMPLES))]
     Create(InputArgs),
     /// Update an organizational unit from JSON --input <file|-> and return it.
+    #[command(after_long_help = help::examples(UPDATE_EXAMPLES))]
     Update(IdInputArgs<OrganizationalUnitId>),
     /// Delete an organizational unit after confirmation.
+    #[command(after_long_help = help::examples(DELETE_EXAMPLES))]
     Delete(IdArgs<OrganizationalUnitId>),
     /// Count inventory entries assigned to one organizational unit.
+    #[command(after_long_help = help::examples(COUNT_ENTRIES_EXAMPLES))]
     CountEntries(IdArgs<OrganizationalUnitId>),
     /// Duplicate an organizational unit and optionally all descendants.
+    #[command(after_long_help = help::examples(DUPLICATE_EXAMPLES))]
     Duplicate(DuplicateArgs),
 }
 

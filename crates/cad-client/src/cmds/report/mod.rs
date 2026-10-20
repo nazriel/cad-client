@@ -7,6 +7,7 @@ use serde_json::Value;
 use crate::adapters::sdk::SdkAdapter;
 use crate::app::context::CommandContext;
 use crate::cli::args::IdArgs;
+use crate::cli::help::{self, Example};
 use crate::error::CliError;
 use crate::exec::reports::prepare_reports;
 use crate::output::to_value;
@@ -18,13 +19,44 @@ pub struct Group {
     pub(crate) command: Command,
 }
 
+const LIST_EXAMPLES: &[Example] = &[
+    Example::new("cad-cli report list", "List reports, newest first"),
+    Example::new(
+        "cad-cli report list --include-snapshots",
+        "Include reports generated from snapshots",
+    ),
+];
+
+const GET_EXAMPLES: &[Example] = &[Example::new(
+    "cad-cli report get 00000000-0000-0000-0000-000000000001",
+    "Show one report and its progress",
+)];
+
+const CREATE_EXAMPLES: &[Example] = &[
+    Example::new(
+        "cad-cli report create --input report.json",
+        "Start a report and print it right away",
+    ),
+    Example::new(
+        "cad-cli report create --input report.json --wait",
+        "Wait until the report is generated",
+    ),
+    Example::new(
+        "cad-cli report create --input report.json --wait --poll-interval 5s",
+        "Check the report every five seconds while waiting",
+    ),
+];
+
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     /// List reports ordered from newest to oldest.
+    #[command(after_long_help = help::examples(LIST_EXAMPLES))]
     List(ListOptions),
     /// Get one report and its progress counters.
+    #[command(after_long_help = help::examples(GET_EXAMPLES))]
     Get(IdArgs<ReportId>),
     /// Create a report from JSON input.
+    #[command(after_long_help = help::examples(CREATE_EXAMPLES))]
     Create(create::Options),
 }
 

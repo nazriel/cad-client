@@ -28,6 +28,7 @@ mise run lint         # hk check --all
 mise run fix          # hk fix --all
 mise run audit        # RustSec advisories and workflow audit
 mise run dist         # release archive for the host in dist/
+mise run docs:cli     # regenerate docs/cli after changing a command
 ```
 
 CI runs lint and the tests on Linux, macOS and Windows for every pull request,
@@ -98,6 +99,33 @@ combine several — `1500ms`, `90s`, `1m30s`, `30m` — a bare number is rejecte
 rather than guessed at. The budget does not apply to document transfers, which
 may run as long as they keep making progress. Plain HTTP is rejected unless the
 server is a loopback host and `--allow-insecure-http` is passed.
+
+## Commands
+
+Every command is described, with examples, in the
+[command reference](docs/cli/README.md); `cad-cli <command> --help` prints the
+same in the terminal.
+
+<!-- cli-commands:start -->
+| Command | Description |
+|---|---|
+| [`activity-category`](docs/cli/activity-category.md) | Manage the company's activity categories |
+| [`activity-group`](docs/cli/activity-group.md) | Manage the company's activity groups |
+| [`benchmark`](docs/cli/benchmark.md) | Read and update the company benchmark |
+| [`context`](docs/cli/context.md) | Show the authenticated session context |
+| [`company`](docs/cli/company.md) | Inspect and create companies available to the current API key |
+| [`company-template`](docs/cli/company-template.md) | Inspect reusable company templates available to the current API key |
+| [`reporting-period`](docs/cli/reporting-period.md) | Manage reporting periods and duplication jobs |
+| [`inventory-line`](docs/cli/inventory-line.md) | Read and mutate inventory lines |
+| [`organizational-unit`](docs/cli/organizational-unit.md) | Manage the company's organizational units |
+| [`document`](docs/cli/document.md) | Upload and download supporting documents |
+| [`custom-field`](docs/cli/custom-field.md) | Manage custom fields |
+| [`custom-option`](docs/cli/custom-option.md) | Manage options belonging to custom fields |
+| [`report`](docs/cli/report.md) | Create and inspect generated reports |
+| [`schema`](docs/cli/schema.md) | Print a machine-readable schema for a CLI resource |
+| [`completions`](docs/cli/completions.md) | Print a shell completion script |
+| [`man`](docs/cli/man.md) | Print the manual page in roff format |
+<!-- cli-commands:end -->
 
 ## Examples
 

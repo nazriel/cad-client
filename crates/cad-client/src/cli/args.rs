@@ -4,13 +4,17 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use cad_api::ids::CompanyId;
-use clap::{Args, ValueEnum};
+use clap::{Args, ValueEnum, ValueHint};
 
 /// Options that apply to every command.
+///
+/// They get a heading of their own so that a subcommand's `--help` keeps its
+/// own options apart from the ones every command accepts.
 #[derive(Debug, Args)]
+#[command(next_help_heading = "Global options")]
 pub struct GlobalArgs {
     /// Exact application origin. Has precedence over every preset.
-    #[arg(long, global = true)]
+    #[arg(long, global = true, value_hint = ValueHint::Url)]
     pub server_url: Option<String>,
 
     /// Select the production or staging application origin.
@@ -98,13 +102,14 @@ where
     T: FromStr + Clone + Send + Sync + 'static,
     <T as FromStr>::Err: std::error::Error + Send + Sync + 'static,
 {
+    /// Identifier of the resource.
     pub(crate) id: T,
 }
 
 #[derive(Debug, Args)]
 pub(crate) struct InputArgs {
     /// Camel-case JSON input file, or `-` for stdin.
-    #[arg(long)]
+    #[arg(long, value_hint = ValueHint::FilePath)]
     pub(crate) input: LocalInputPath,
 }
 
@@ -114,6 +119,7 @@ where
     T: FromStr + Clone + Send + Sync + 'static,
     <T as FromStr>::Err: std::error::Error + Send + Sync + 'static,
 {
+    /// Identifier of the resource.
     pub(crate) id: T,
 
     #[command(flatten)]

@@ -1,17 +1,66 @@
 //! Root command-line parser and arguments shared by multiple commands.
 
 pub(crate) mod args;
+#[cfg(test)]
+mod docs;
+pub(crate) mod help;
 
 use clap::Parser;
 
 pub use args::{EnvironmentName, GlobalArgs, OutputFormat};
+
+use help::{Example, Variable};
+
+const ENVIRONMENT: &[Variable] = &[
+    Variable::new(
+        "CAD_API_KEY",
+        "Machine API key ID (a UUID). Required by every command that calls the platform",
+    ),
+    Variable::new(
+        "CAD_API_SECRET",
+        "Secret of the machine API key. Required by every command that calls the platform",
+    ),
+    Variable::new(
+        "CAD_SERVER_URL",
+        "Exact application origin. Overrides --environment and CAD_ENV, but not --server-url",
+    ),
+    Variable::new(
+        "CAD_ENV",
+        "Origin preset when no origin is given: production (prod) or staging (stage)",
+    ),
+    Variable::new(
+        "CAD_COMPANY_ID",
+        "Accessible company to act on when --company-id is not given",
+    ),
+    Variable::new(
+        "RUST_LOG",
+        "Diagnostic logging on stderr; cad_api=debug logs one line per platform request",
+    ),
+    Variable::new("NO_COLOR", "Disable colour in tables and status messages"),
+];
+
+const EXAMPLES: &[Example] = &[
+    Example::new(
+        "cad-cli --environment staging context show",
+        "Check which API key and company the CLI acts as",
+    ),
+    Example::new(
+        "cad-cli company list --output json",
+        "Print the accessible companies as JSON",
+    ),
+    Example::new(
+        "cad-cli --company-id 00000000-0000-0000-0000-000000000001 reporting-period list",
+        "Run a command for another accessible company",
+    ),
+];
 
 /// Parsed `cad-cli` invocation.
 #[derive(Debug, Parser)]
 #[command(
     name = "cad-cli",
     version,
-    about = "Carbon+Alt+Delete command-line client"
+    about = "Carbon+Alt+Delete command-line client",
+    after_long_help = help::environment_and_examples(ENVIRONMENT, EXAMPLES)
 )]
 pub struct Cli {
     #[command(flatten)]

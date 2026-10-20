@@ -8,6 +8,7 @@ use serde_json::{Map, Value, json};
 
 use crate::app::context::CommandContext;
 use crate::cli::args::InputArgs;
+use crate::cli::help::{self, Example};
 use crate::error::CliError;
 use crate::output::to_value;
 
@@ -18,13 +19,43 @@ pub struct Group {
     pub(crate) command: Command,
 }
 
+const READ_EXAMPLES: &[Example] = &[
+    Example::new(
+        "cad-cli benchmark read",
+        "Show the company benchmark as a table",
+    ),
+    Example::new(
+        "cad-cli --output json benchmark read",
+        "Print the benchmark as one JSON object",
+    ),
+];
+
+const CREATE_EXAMPLES: &[Example] = &[Example::new(
+    "cad-cli benchmark create --input benchmark.json",
+    "Create the benchmark from an ID-free JSON object",
+)];
+
+const UPDATE_EXAMPLES: &[Example] = &[
+    Example::new(
+        "cad-cli benchmark update --input benchmark.json",
+        "Update the benchmark from a file",
+    ),
+    Example::new(
+        "cat benchmark.json | cad-cli --output json benchmark update --input -",
+        "Read the benchmark from stdin and print the result as JSON",
+    ),
+];
+
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     /// Read and return the company's benchmark.
+    #[command(after_long_help = help::examples(READ_EXAMPLES))]
     Read,
     /// Create or initialize the company benchmark from JSON --input <file|-> and return it.
+    #[command(after_long_help = help::examples(CREATE_EXAMPLES))]
     Create(InputArgs),
     /// Update the company benchmark from JSON --input <file|-> and return it.
+    #[command(after_long_help = help::examples(UPDATE_EXAMPLES))]
     Update(InputArgs),
 }
 

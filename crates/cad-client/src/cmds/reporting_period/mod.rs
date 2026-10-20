@@ -13,6 +13,7 @@ use serde_json::{Map, Value, json};
 use crate::adapters::sdk::SdkAdapter;
 use crate::app::context::CommandContext;
 use crate::cli::args::{IdArgs, IdInputArgs, InputArgs};
+use crate::cli::help::{self, Example};
 use crate::error::CliError;
 use crate::output::to_value;
 
@@ -23,23 +24,93 @@ pub struct Group {
     pub(crate) command: Command,
 }
 
+const LIST_EXAMPLES: &[Example] = &[
+    Example::new(
+        "cad-cli reporting-period list",
+        "List the reporting periods of the company",
+    ),
+    Example::new(
+        "cad-cli reporting-period list --output json",
+        "Print the reporting periods as JSON",
+    ),
+];
+
+const GET_EXAMPLES: &[Example] = &[Example::new(
+    "cad-cli reporting-period get 00000000-0000-0000-0000-000000000001",
+    "Show one reporting period",
+)];
+
+const CREATE_EXAMPLES: &[Example] = &[Example::new(
+    "cad-cli reporting-period create --input period.json",
+    "Create a reporting period from a file",
+)];
+
+const DETAILS_EXAMPLES: &[Example] = &[Example::new(
+    "cad-cli reporting-period details 00000000-0000-0000-0000-000000000001",
+    "Show aggregate information for one reporting period",
+)];
+
+const UPDATE_EXAMPLES: &[Example] = &[Example::new(
+    "cad-cli reporting-period update 00000000-0000-0000-0000-000000000001 --input period.json",
+    "Update a reporting period from a file",
+)];
+
+const DELETE_EXAMPLES: &[Example] = &[
+    Example::new(
+        "cad-cli reporting-period delete 00000000-0000-0000-0000-000000000001",
+        "Delete a reporting period after a confirmation prompt",
+    ),
+    Example::new(
+        "cad-cli reporting-period delete 00000000-0000-0000-0000-000000000001 --yes",
+        "Delete without prompting, e.g. from a script",
+    ),
+];
+
+const DUPLICATE_EXAMPLES: &[Example] = &[
+    Example::new(
+        "cad-cli reporting-period duplicate --input duplicate.json",
+        "Start a duplication job and print its status",
+    ),
+    Example::new(
+        "cad-cli reporting-period duplicate --input duplicate.json --wait",
+        "Wait until the duplication job finishes",
+    ),
+    Example::new(
+        "cad-cli reporting-period duplicate --input duplicate.json --wait --timeout 1h",
+        "Wait up to an hour instead of the default 30 minutes",
+    ),
+];
+
+const DUPLICATION_STATUS_EXAMPLES: &[Example] = &[Example::new(
+    "cad-cli reporting-period duplication-status 00000000-0000-0000-0000-000000000001",
+    "Show the state of a duplication job",
+)];
+
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     /// List reporting periods.
+    #[command(after_long_help = help::examples(LIST_EXAMPLES))]
     List,
     /// Get one reporting period.
+    #[command(after_long_help = help::examples(GET_EXAMPLES))]
     Get(IdArgs<ReportingPeriodId>),
     /// Return aggregate information for one reporting period.
+    #[command(after_long_help = help::examples(DETAILS_EXAMPLES))]
     Details(IdArgs<ReportingPeriodId>),
     /// Create a reporting period from JSON --input <file|-> and return it.
+    #[command(after_long_help = help::examples(CREATE_EXAMPLES))]
     Create(InputArgs),
     /// Update a reporting period from JSON --input <file|-> and return it.
+    #[command(after_long_help = help::examples(UPDATE_EXAMPLES))]
     Update(IdInputArgs<ReportingPeriodId>),
     /// Delete a reporting period.
+    #[command(after_long_help = help::examples(DELETE_EXAMPLES))]
     Delete(IdArgs<ReportingPeriodId>),
     /// Start a reporting-period duplication job from JSON --input <file|->.
+    #[command(after_long_help = help::examples(DUPLICATE_EXAMPLES))]
     Duplicate(duplicate::Options),
     /// Inspect a duplication job.
+    #[command(after_long_help = help::examples(DUPLICATION_STATUS_EXAMPLES))]
     DuplicationStatus(IdArgs<DuplicationStatusId>),
 }
 

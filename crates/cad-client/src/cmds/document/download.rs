@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use cad_api::ids::DocumentId;
-use clap::Args;
+use clap::{Args, ValueHint};
 use serde_json::Value;
 use tempfile::NamedTempFile;
 
@@ -13,11 +13,14 @@ use crate::support::terminal::cancelled;
 
 #[derive(Debug, Args)]
 pub(crate) struct Options {
+    /// Identifier of the document.
     pub(crate) id: DocumentId,
 
-    #[arg(long)]
+    /// File to write the document to.
+    #[arg(long, value_hint = ValueHint::FilePath)]
     pub(crate) out: PathBuf,
 
+    /// Replace the --out file if it already exists.
     #[arg(long)]
     pub(crate) force: bool,
 }

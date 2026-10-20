@@ -8,9 +8,11 @@ use crate::error::CliError;
 
 #[derive(Debug, Args)]
 pub(crate) struct Options {
+    /// Page to fetch, starting at 1.
     #[arg(long, default_value_t = 1)]
     pub(crate) page: u32,
 
+    /// Lines per page, at most 250.
     #[arg(
         long,
         default_value_t = InventoryPageSize::DEFAULT,
@@ -18,11 +20,11 @@ pub(crate) struct Options {
     )]
     pub(crate) limit: u32,
 
-    /// Dynamic filter in `attribute_operator=value` form; repeat as needed.
+    /// Filter in `attribute_operator=value` form, e.g. `country_inList=PL,DE`; repeat as needed.
     #[arg(long = "filter")]
     pub(crate) filters: Vec<String>,
 
-    /// Sort expression accepted by the backend, e.g. `date_desc`.
+    /// Sort in `attribute_asc` or `attribute_desc` form, e.g. `date_desc`; repeat as needed.
     #[arg(long = "sort")]
     pub(crate) sort: Vec<String>,
 }
