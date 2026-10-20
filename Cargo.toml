@@ -12,7 +12,7 @@ license = "MIT"
 assert_cmd = "2.2.2"
 base64 = "0.23.1"
 chrono = { version = "0.4.42", features = ["serde"] }
-clap = { version = "4.5.48", features = ["derive"] }
+clap = { version = "4.5.48", features = ["derive", "wrap_help"] }
 clap_complete = "4.6.9"
 clap_mangen = "0.3.3"
 comfy-table = "8.0.0"

@@ -1,6 +1,6 @@
 use cad_api::domains::documents::DocumentUploadRequest;
 use cad_api::ids::CompanyId;
-use clap::Args;
+use clap::{Args, ValueHint};
 use serde_json::Value;
 
 use crate::app::context::CommandContext;
@@ -13,11 +13,11 @@ use crate::support::terminal::cancelled;
 #[derive(Debug, Args)]
 pub(crate) struct Options {
     /// Local file to stream to object storage.
-    #[arg(long)]
+    #[arg(long, value_hint = ValueHint::FilePath)]
     pub(crate) file: LocalInputPath,
 
     /// Optional prepare-upload metadata JSON. Filename and company are injected.
-    #[arg(long)]
+    #[arg(long, value_hint = ValueHint::FilePath)]
     pub(crate) input: Option<LocalInputPath>,
 }
 
