@@ -40,6 +40,35 @@ database and audits the workflows; Dependabot opens grouped weekly update PRs.
 
 ## Install
 
+On macOS and Linux, install the latest release binary into `~/.local/bin`:
+
+```console
+curl -fsSL https://raw.githubusercontent.com/nazriel/cad-client/main/install.sh | sh
+```
+
+Pass options after `sh -s --`, for example `--version v0.1.0` or
+`--bin-dir DIR`.
+
+On Windows, in PowerShell 5.1 or 7, this installs `cad-cli.exe` into
+`~\.local\bin` and adds that directory to the user `PATH`:
+
+```powershell
+irm https://raw.githubusercontent.com/nazriel/cad-client/main/install.ps1 | iex
+```
+
+To pass `-Version`, `-BinDir` or `-NoModifyPath`, run it as a script block:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/nazriel/cad-client/main/install.ps1))) -Version v0.1.0
+```
+
+Both installers verify the archive against the release's `SHA256SUMS`. Release
+archives cover macOS (Apple Silicon, Intel), Linux (x86_64, aarch64; statically
+linked with musl) and Windows (x86_64, ARM64) and are attached to each
+[GitHub release](https://github.com/nazriel/cad-client/releases).
+
+From a checkout:
+
 ```console
 cargo install --path crates/cad-client --bin cad-cli
 ```

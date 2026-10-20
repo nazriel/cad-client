@@ -64,3 +64,55 @@ jobs:
             dist/*.zip
           if-no-files-found: error
           retention-days: 7
+
+  # Runs the one-line installers against the archives just built, served
+  # from a local HTTP server in place of the GitHub release.
+  install:
+    name: Install ${{ matrix.os }}
+    needs: dist
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: release
+          pattern: dist-*
+          merge-multiple: true
+
+      - name: Install from a local release
+        run: |
+          version="v$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
+          cp install.sh install.ps1 release/
+          sha256="$(command -v sha256sum || echo "shasum -a 256")"
+          (cd release && $sha256 -- *.tar.gz *.zip > SHA256SUMS)
+
+          python="$(command -v python || command -v python3)"
+          "$python" -m http.server 8765 --bind 127.0.0.1 --directory release > /dev/null 2>&1 &
+          trap 'kill $!' EXIT
+          url=http://127.0.0.1:8765
+          for _ in $(seq 30); do curl -fsS -o /dev/null "$url/SHA256SUMS" && break; sleep 1; done
+
+          export CAD_CLI_DOWNLOAD_URL="$url" CAD_CLI_VERSION="$version"
+          check() { "$1" --version | grep -Fx "cad-cli ${version#v}"; }
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            dir="$(cygpath -w "$RUNNER_TEMP")"
+            tmp="$(cygpath -u "$RUNNER_TEMP")"
+            pwsh -NoProfile -File install.ps1 -BinDir "$dir\\pwsh\\bin"
+            check "$tmp/pwsh/bin/cad-cli.exe"
+            CAD_CLI_BIN_DIR="$dir\\ps5\\bin" \
+              powershell -NoProfile -ExecutionPolicy Bypass -Command "irm $url/install.ps1 | iex"
+            check "$tmp/ps5/bin/cad-cli.exe"
+          else
+            curl -fsSL "$url/install.sh" | CAD_CLI_BIN_DIR="$RUNNER_TEMP/sh/bin" sh
+            check "$RUNNER_TEMP/sh/bin/cad-cli"
+          fi
