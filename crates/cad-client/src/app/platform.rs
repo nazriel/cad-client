@@ -44,7 +44,7 @@ impl Platform {
     pub(crate) async fn scoped(&self) -> Result<SdkAdapter, CliError> {
         let scoped = match self.company_id {
             Some(company_id) => self.connected.for_company(company_id).await?,
-            None => self.connected.clone().scope_current_company().await?,
+            None => self.connected.clone().scope_current_company()?,
         };
         Ok(SdkAdapter::new(scoped))
     }

@@ -43,7 +43,6 @@ async fn connect(server: &MockServer, company_id: CompanyId) -> Client<CompanySc
         .await
         .expect("machine identity succeeds")
         .scope_current_company()
-        .await
         .expect("the machine key resolves a company")
 }
 

@@ -117,7 +117,7 @@ impl Authenticated for CompanyScoped {
 /// use cad_api::{Client, Connected, Error};
 ///
 /// async fn valid(client: Client<Connected>) -> Result<(), Error> {
-///     let client = client.scope_current_company().await?;
+///     let client = client.scope_current_company()?;
 ///     let _reports = client.reports();
 ///     Ok(())
 /// }
@@ -196,7 +196,7 @@ impl<State: Authenticated> Client<State> {
     }
 
     /// Returns the machine identity context established during connection.
-    pub async fn context(&self) -> SessionContext {
+    pub fn context(&self) -> SessionContext {
         self.state.core().session_context()
     }
 
@@ -232,7 +232,7 @@ impl Client<Connected> {
     /// # Errors
     ///
     /// Returns an authentication error if the identity response has no resolved company.
-    pub async fn scope_current_company(self) -> Result<Client<CompanyScoped>> {
+    pub fn scope_current_company(self) -> Result<Client<CompanyScoped>> {
         let core = self.state.core;
         let company_id = core
             .session_context()

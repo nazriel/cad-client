@@ -455,7 +455,7 @@ async fn missing_credentials_fail_before_any_request() {
     .expect_err("missing credentials must fail");
 
     assert!(matches!(error, CliError::AuthConfig(_)));
-    assert!(terminal.stdout().is_empty());
+    assert_eq!(terminal.stdout(), "");
 }
 
 #[tokio::test]
@@ -485,7 +485,7 @@ async fn delete_outside_a_tty_refuses_without_yes() {
         [format!("GET {IDENTITY_PATH}")],
         "only the machine identity check may reach the server"
     );
-    assert!(terminal.stdout().is_empty());
+    assert_eq!(terminal.stdout(), "");
 }
 
 #[tokio::test]

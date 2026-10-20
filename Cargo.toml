@@ -45,3 +45,7 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
+# An impl of a trait that declares `async fn` reads best as `async fn`, awaited
+# or not; the suggested `impl Future` plus `std::future::ready` only adds noise
+# to the test doubles that trip it.
+unused_async_trait_impl = "allow"
