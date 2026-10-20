@@ -123,6 +123,38 @@ selected company ID to stderr.
 Authorization headers, request bodies, and URL query strings are never logged.
 All platform API paths, including machine identity, are rooted at `/api/`.
 
+## Companies
+
+Companies and reusable company templates are session-level resources; they do not
+use `--company-id`. Inspect their credential-free contracts before automating
+creation:
+
+```console
+cad-cli company --help
+cad-cli company-template --help
+cad-cli schema company > company-cli-schema.json
+cad-cli schema company-template > company-template-cli-schema.json
+```
+
+List templates before creating a company from one. `company create` receives a
+camel-case JSON object through `--input <file|->` and asks for confirmation
+before sending the request:
+
+```console
+cad-cli --output json company-template list
+printf '%s' '{"name":"Acme GmbH","template":"TEMPLATE_COMPANY","companyTemplateId":"00000000-0000-0000-0000-000000000001"}' | \
+  cad-cli --output json company create --input -
+```
+
+Creating a company may affect the next invoice. The confirmation prompt shows
+`(y/N)`, so declining is the default. Pass `--yes` only when that consequence
+has been reviewed. Non-interactive creation without `--yes` fails before making
+the request. `name` is required by the API but may be explicitly `null`;
+`template` defaults to `DEFAULT`. The CLI permits `DEFAULT` and
+`TEMPLATE_COMPANY`; internal demonstration templates are intentionally not
+available. The optional `companyTemplateId` is a template UUID returned by
+`company-template list`.
+
 ## Benchmarks
 
 A company has one benchmark. Although the platform endpoint returns a

@@ -4,6 +4,7 @@ pub mod activity_category;
 pub mod activity_group;
 pub mod benchmark;
 pub mod company;
+pub mod company_template;
 pub mod context;
 pub mod custom_field;
 pub mod custom_option;
@@ -34,8 +35,10 @@ pub enum Command {
     Benchmark(benchmark::Group),
     /// Show the authenticated session context.
     Context(context::Group),
-    /// Inspect companies available to the current API key.
+    /// Inspect and create companies available to the current API key.
     Company(company::Group),
+    /// Inspect reusable company templates available to the current API key.
+    CompanyTemplate(company_template::Group),
     /// Manage reporting periods and duplication jobs.
     ReportingPeriod(reporting_period::Group),
     /// Read and mutate inventory lines.
@@ -68,6 +71,9 @@ impl Command {
             Self::Benchmark(group) => Invocation::Online(OnlineCommand::Benchmark(group)),
             Self::Context(group) => Invocation::Online(OnlineCommand::Context(group)),
             Self::Company(group) => Invocation::Online(OnlineCommand::Company(group)),
+            Self::CompanyTemplate(group) => {
+                Invocation::Online(OnlineCommand::CompanyTemplate(group))
+            }
             Self::ReportingPeriod(group) => {
                 Invocation::Online(OnlineCommand::ReportingPeriod(group))
             }
@@ -128,6 +134,7 @@ pub(crate) enum OnlineCommand {
     Benchmark(benchmark::Group),
     Context(context::Group),
     Company(company::Group),
+    CompanyTemplate(company_template::Group),
     ReportingPeriod(reporting_period::Group),
     InventoryLine(inventory_line::Group),
     OrganizationalUnit(organizational_unit::Group),
@@ -158,7 +165,8 @@ impl OnlineCommand {
                     .run(platform.connected(), platform.requested_company_id())
                     .await
             }
-            Self::Company(group) => group.run(platform.connected()).await,
+            Self::Company(group) => group.run(context, platform.connected()).await,
+            Self::CompanyTemplate(group) => group.run(platform.connected()).await,
             Self::ReportingPeriod(group) => group.run(context, &platform.scoped().await?).await,
             Self::InventoryLine(group) => {
                 group.run(context, platform.scoped().await?.client()).await

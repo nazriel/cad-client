@@ -20,9 +20,10 @@ mod protocol;
 mod transport;
 
 pub use auth::{
-    ApiKeyV2Credentials, Company, CompanySelectionSource, MachineCompanySelection,
-    MachinePrincipal, SessionContext,
+    ApiKeyV2Credentials, CompanySelectionSource, MachineCompanySelection, MachinePrincipal,
+    SessionContext,
 };
 pub use client::{Client, CompanyScoped, Connected, Disconnected};
 pub use config::{Environment, ServerConfig};
+pub use domains::companies::Company;
 pub use error::{Error, Result};

@@ -33,7 +33,7 @@ pub struct GlobalArgs {
     #[arg(long, value_enum, default_value_t = OutputFormat::Table, global = true)]
     pub output: OutputFormat,
 
-    /// Skip destructive-operation prompts.
+    /// Skip confirmation prompts for consequential operations.
     #[arg(long, global = true)]
     pub yes: bool,
 }

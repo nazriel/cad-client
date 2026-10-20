@@ -72,6 +72,7 @@ macro_rules! identifier {
 }
 
 identifier!(CompanyId, "A company identifier.");
+identifier!(TemplateCompanyId, "A reusable company-template identifier.");
 identifier!(ActivityCategoryId, "An activity-category identifier.");
 identifier!(ActivityGroupId, "An activity-group identifier.");
 identifier!(ReportingPeriodId, "A reporting-period identifier.");

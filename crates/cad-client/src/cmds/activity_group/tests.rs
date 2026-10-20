@@ -7,7 +7,7 @@ fn schema_describes_id_safe_inputs_and_all_operations() {
     assert_eq!(schema["resource"], "activity-group");
     let create_input = &schema["commands"]["create"]["input"];
     assert!(create_input["properties"].get("id").is_none());
-    assert!(create_input["additionalProperties"] == false);
+    assert_eq!(create_input["additionalProperties"], false);
     assert_eq!(create_input["properties"]["name"]["maxLength"], 128);
     assert_eq!(
         schema["commands"]["update"]["input"]["properties"]["description"]["type"],

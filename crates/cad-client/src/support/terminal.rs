@@ -50,7 +50,7 @@ pub(crate) trait Terminal: Send + Sync {
     /// Writes a user-facing status message to stderr.
     fn status(&self, kind: StatusKind, message: &str) -> Result<(), CliError>;
 
-    /// Confirms a destructive operation, unless confirmation was explicitly skipped.
+    /// Confirms a consequential operation, unless confirmation was explicitly skipped.
     fn confirm(&self, prompt: &str, assume_yes: bool) -> Result<(), CliError>;
 
     /// Reads all bytes from the process standard input.
@@ -93,13 +93,13 @@ impl Terminal for ProcessTerminal {
         let stdin = std::io::stdin();
         if !stdin.is_terminal() {
             return Err(CliError::Input(
-                "destructive operations outside a TTY require --yes".to_owned(),
+                "operations that require confirmation outside a TTY require --yes".to_owned(),
             ));
         }
 
         let stderr = std::io::stderr();
         let mut stderr = stderr.lock();
-        write!(stderr, "{prompt} [y/N] ")?;
+        write!(stderr, "{prompt} (y/N) ")?;
         stderr.flush()?;
 
         let mut answer = String::new();
