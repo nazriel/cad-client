@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Apply the automatic fixes from hk.pkl to all files"
+set -euo pipefail
+
+hk fix --all

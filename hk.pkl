@@ -1,0 +1,66 @@
+amends "package://github.com/jdx/hk/releases/download/v2.7.1/hk@2.7.1#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v2.7.1/hk@2.7.1#/Builtins.pkl"
+
+// Single source of the lint rules: Git hooks, `mise run lint` and CI all run
+// these steps.
+local linters = new Mapping<String, Step | Group> {
+  ["cargo-fmt"] = Builtins.cargo_fmt
+  // One run for the whole workspace: the builtin runs once per crate that
+  // owns a changed file.
+  ["cargo-clippy"] = new Step {
+    glob = List("**/*.rs", "**/Cargo.toml", "Cargo.lock")
+    check = new CommandSpec {
+      command = "cargo clippy --workspace --all-targets --all-features --locked --quiet -- -D warnings"
+      effect = "write"
+    }
+    env {
+      ["CARGO_TERM_PROGRESS_WHEN"] = "never"
+    }
+  }
+  // Advisories need the network and change without a commit; they run in the
+  // daily security workflow instead.
+  ["cargo-deny"] = (Builtins.cargo_deny) {
+    check = new CommandSpec {
+      command = "cargo-deny --locked --workspace check bans licenses sources"
+      effect = "write"
+    }
+  }
+  ["actionlint"] = Builtins.actionlint
+  ["zizmor"] = Builtins.zizmor
+  ["shellcheck"] = (Builtins.shellcheck) {
+    // mise file tasks have no extension; the shebang alone marks them.
+    match_any = List(
+      new FileSelector { glob = List("**/*.sh", "**/*.bash", ".mise/tasks/**") },
+      new FileSelector { types = List("sh", "bash") },
+    )
+  }
+  ["merge-conflicts"] = Builtins.check_merge_conflict
+  ["private-keys"] = Builtins.detect_private_key
+  ["newlines"] = Builtins.newlines
+  ["trailing-whitespace"] = Builtins.trailing_whitespace
+}
+
+hooks {
+  ["pre-commit"] {
+    fix = true
+    stash = "git"
+    steps = linters
+  }
+  ["pre-push"] {
+    steps {
+      ...linters
+      ["test"] {
+        glob = List("**/*.rs", "**/Cargo.toml", "Cargo.lock")
+        check = "mise run test"
+        exclusive = true
+      }
+    }
+  }
+  ["check"] {
+    steps = linters
+  }
+  ["fix"] {
+    fix = true
+    steps = linters
+  }
+}
