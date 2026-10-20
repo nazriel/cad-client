@@ -1,6 +1,8 @@
 //! Root command-line parser and arguments shared by multiple commands.
 
 pub(crate) mod args;
+#[cfg(test)]
+mod docs;
 pub(crate) mod help;
 
 use clap::Parser;
