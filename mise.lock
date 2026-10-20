@@ -43,6 +43,12 @@ url = "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_
 url_api = "https://api.github.com/repos/rhysd/actionlint/releases/assets/384924880"
 provenance = "github-attestations"
 
+[tools.actionlint."platforms.windows-arm64"]
+checksum = "sha256:cadcf7ea4efe3a68728893813643cebe1185e5b1d4be5b96245f65c9a4d5ea41"
+url = "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_windows_arm64.zip"
+url_api = "https://api.github.com/repos/rhysd/actionlint/releases/assets/384924915"
+provenance = "github-attestations"
+
 [tools.actionlint."platforms.windows-x64"]
 checksum = "sha256:6e7241b51e6817ea6a047693d8e6fed13b31819c9a0dd6c5a726e1592d22f6e9"
 url = "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_windows_amd64.zip"
@@ -83,6 +89,11 @@ url_api = "https://api.github.com/repos/EmbarkStudios/cargo-deny/releases/assets
 checksum = "sha256:248da7f581724e470071990c088ffc55c811981715f4cbdb258621fb79f8b7a6"
 url = "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/cargo-deny-0.20.2-x86_64-apple-darwin.tar.gz"
 url_api = "https://api.github.com/repos/EmbarkStudios/cargo-deny/releases/assets/471598357"
+
+[tools.cargo-deny."platforms.windows-arm64"]
+checksum = "sha256:975a22143262fd27476d19ee00c7af67978426e40e1dee94eed6bbade1cf87dc"
+url = "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/cargo-deny-0.20.2-x86_64-pc-windows-msvc.tar.gz"
+url_api = "https://api.github.com/repos/EmbarkStudios/cargo-deny/releases/assets/471599057"
 
 [tools.cargo-deny."platforms.windows-x64"]
 checksum = "sha256:975a22143262fd27476d19ee00c7af67978426e40e1dee94eed6bbade1cf87dc"
@@ -130,6 +141,12 @@ url = "https://github.com/cli/cli/releases/download/v2.102.0/gh_2.102.0_macOS_am
 url_api = "https://api.github.com/repos/cli/cli/releases/assets/599854716"
 provenance = "github-attestations"
 
+[tools.gh."platforms.windows-arm64"]
+checksum = "sha256:5dcf12aa8525eabd0c46ec414f323ab6cf65229fc2cd46543cc705001bbaf223"
+url = "https://github.com/cli/cli/releases/download/v2.102.0/gh_2.102.0_windows_arm64.zip"
+url_api = "https://api.github.com/repos/cli/cli/releases/assets/599854779"
+provenance = "github-attestations"
+
 [tools.gh."platforms.windows-x64"]
 checksum = "sha256:ae64e556ecc240b200f7eba60d550e4bb60d78e860e69dd88c449405b86067f4"
 url = "https://github.com/cli/cli/releases/download/v2.102.0/gh_2.102.0_windows_amd64.zip"
@@ -164,6 +181,11 @@ signer = "sigstore-oidc:https://github.com/jdx/hk/.github/workflows/release.yml"
 [tools.hk."platforms.macos-arm64"]
 checksum = "sha256:18914b99e1fdcc0415ba77c8d01b1f4df73b109ed90b3f418053e2f3eaf84cbd"
 url = "https://github.com/jdx/hk/releases/download/v2.7.1/hk-aarch64-apple-darwin.tar.gz"
+signer = "sigstore-oidc:https://github.com/jdx/hk/.github/workflows/release.yml"
+
+[tools.hk."platforms.windows-arm64"]
+checksum = "sha256:09c92ab16e53c4c584031d32991802e44439d13bdb13ee3b28dc4af721d88020"
+url = "https://github.com/jdx/hk/releases/download/v2.7.1/hk-aarch64-pc-windows-msvc.zip"
 signer = "sigstore-oidc:https://github.com/jdx/hk/.github/workflows/release.yml"
 
 [tools.hk."platforms.windows-x64"]
@@ -212,6 +234,12 @@ url = "https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-macos-amd64"
 url_api = "https://api.github.com/repos/jqlang/jq/releases/assets/453012782"
 provenance = "github-attestations"
 
+[tools.jq."platforms.windows-arm64"]
+checksum = "sha256:a6fc67fedaf9128a3309a1e2ebb8b986aeccf70122ee46d2cb4849e423f0c627"
+url = "https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-windows-amd64.exe"
+url_api = "https://api.github.com/repos/jqlang/jq/releases/assets/453012788"
+provenance = "github-attestations"
+
 [tools.jq."platforms.windows-x64"]
 checksum = "sha256:a6fc67fedaf9128a3309a1e2ebb8b986aeccf70122ee46d2cb4849e423f0c627"
 url = "https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-windows-amd64.exe"
@@ -246,6 +274,11 @@ signer = "sigstore-oidc:https://github.com/jdx/mr-boxington/.github/workflows/re
 [tools.mr-boxington."platforms.macos-arm64"]
 checksum = "sha256:47630813d15a001cfceceeeb1f35008421fb22b8ba132106067d217e000b1b68"
 url = "https://github.com/jdx/mr-boxington/releases/download/v1.25.0/mbx-aarch64-apple-darwin.tar.gz"
+signer = "sigstore-oidc:https://github.com/jdx/mr-boxington/.github/workflows/release.yml"
+
+[tools.mr-boxington."platforms.windows-arm64"]
+checksum = "sha256:6d368ed3f4a8def15f002c404ca534b2684226dacd79ca8d2b60232192bb006d"
+url = "https://github.com/jdx/mr-boxington/releases/download/v1.25.0/mbx-aarch64-pc-windows-msvc.zip"
 signer = "sigstore-oidc:https://github.com/jdx/mr-boxington/.github/workflows/release.yml"
 
 [tools.mr-boxington."platforms.windows-x64"]
@@ -297,6 +330,11 @@ checksum = "sha256:3c89db4edcab7cf1c27bff178882e0f6f27f7afdf54e859fa041fca10febe
 url = "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.darwin.x86_64.tar.xz"
 url_api = "https://api.github.com/repos/koalaman/shellcheck/releases/assets/279056930"
 
+[tools.shellcheck."platforms.windows-arm64"]
+checksum = "sha256:8a4e35ab0b331c85d73567b12f2a444df187f483e5079ceffa6bda1faa2e740e"
+url = "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.zip"
+url_api = "https://api.github.com/repos/koalaman/shellcheck/releases/assets/279056944"
+
 [tools.shellcheck."platforms.windows-x64"]
 checksum = "sha256:8a4e35ab0b331c85d73567b12f2a444df187f483e5079ceffa6bda1faa2e740e"
 url = "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.zip"
@@ -341,6 +379,12 @@ provenance = "github-attestations"
 checksum = "sha256:72ae63bb85b67229c06242f04195cb43927e9fab5f43803c6434dc701a517d61"
 url = "https://github.com/zizmorcore/zizmor/releases/download/v1.31.1/zizmor-x86_64-apple-darwin.tar.gz"
 url_api = "https://api.github.com/repos/zizmorcore/zizmor/releases/assets/645467287"
+provenance = "github-attestations"
+
+[tools.zizmor."platforms.windows-arm64"]
+checksum = "sha256:4de30371c8a3b483aecbcf0dec1fd6a2b6aae65051ca226b4f6527baac6a8c7a"
+url = "https://github.com/zizmorcore/zizmor/releases/download/v1.31.1/zizmor-x86_64-pc-windows-msvc.zip"
+url_api = "https://api.github.com/repos/zizmorcore/zizmor/releases/assets/645467286"
 provenance = "github-attestations"
 
 [tools.zizmor."platforms.windows-x64"]
