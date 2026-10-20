@@ -7,13 +7,36 @@ The workspace contains exactly two packages:
 - `cad-api`: a typed async SDK;
 - `cad-client`: application workflows and the `cad-cli` executable.
 
-## Toolchain
+## Development
 
-The repository is pinned to Rust 1.96.0. Run the complete local check with:
+[mise](https://mise.jdx.dev/) pins every tool in `mise.toml`: Rust 1.99.1,
+[mr boxington](https://mr-boxington.jdx.dev/) (`mbx`), which caches Cargo
+builds across worktrees and CI, and the linters. Install them and the Git
+hooks once:
 
 ```console
-./scripts/check.sh
+mise run setup
 ```
+
+The hooks come from [hk](https://hk.jdx.dev/) and run the steps in `hk.pkl`:
+rustfmt, Clippy, cargo-deny, actionlint, zizmor and shellcheck before each
+commit, and the tests as well before each push. The same steps are tasks:
+
+```console
+mise run check        # everything CI checks: lint, doc and test
+mise run lint         # hk check --all
+mise run fix          # hk fix --all
+mise run audit        # RustSec advisories and workflow audit
+mise run dist         # release archive for the host in dist/
+```
+
+CI runs lint and the tests on Linux, macOS and Windows for every pull request,
+and builds the release archives. Pushing a tag `v<version>` that matches the
+workspace version publishes a GitHub release with archives for Linux (musl),
+macOS and Windows on x86_64 and aarch64, plus `SHA256SUMS`.
+
+A daily security workflow checks `Cargo.lock` against the RustSec advisory
+database and audits the workflows; Dependabot opens grouped weekly update PRs.
 
 ## Install
 
