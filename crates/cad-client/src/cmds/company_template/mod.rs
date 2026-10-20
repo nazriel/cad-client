@@ -6,6 +6,7 @@ use clap::{Args, Subcommand};
 use schemars::schema_for;
 use serde_json::{Map, Value, json};
 
+use crate::cli::help::{self, Example};
 use crate::error::CliError;
 use crate::output::to_value;
 
@@ -16,9 +17,15 @@ pub struct Group {
     pub(crate) command: Command,
 }
 
+const LIST_EXAMPLES: &[Example] = &[Example::new(
+    "cad-cli company-template list",
+    "List the company templates the API key can access",
+)];
+
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     /// List reusable company templates accessible to the authenticated user.
+    #[command(after_long_help = help::examples(LIST_EXAMPLES))]
     List,
 }
 

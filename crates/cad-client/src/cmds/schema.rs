@@ -7,6 +7,7 @@
 use clap::{Args, Subcommand};
 use serde_json::{Value, json};
 
+use crate::cli::help::{self, Example};
 use crate::error::CliError;
 use crate::support::terminal::Terminal;
 
@@ -20,23 +21,71 @@ pub struct Group {
     command: Command,
 }
 
+const LIST_EXAMPLES: &[Example] = &[Example::new(
+    "cad-cli schema list",
+    "List the resources that have a CLI schema",
+)];
+
+const BENCHMARK_EXAMPLES: &[Example] = &[Example::new(
+    "cad-cli schema benchmark > benchmark-cli-schema.json",
+    "Save the benchmark command contract for an automation or LLM client",
+)];
+
+const ACTIVITY_CATEGORY_EXAMPLES: &[Example] = &[Example::new(
+    "cad-cli schema activity-category",
+    "Print the activity-category command contract",
+)];
+
+const ACTIVITY_GROUP_EXAMPLES: &[Example] = &[Example::new(
+    "cad-cli schema activity-group",
+    "Print the activity-group command contract",
+)];
+
+const COMPANY_EXAMPLES: &[Example] = &[Example::new(
+    "cad-cli schema company",
+    "Print the company command contract",
+)];
+
+const COMPANY_TEMPLATE_EXAMPLES: &[Example] = &[Example::new(
+    "cad-cli schema company-template",
+    "Print the company-template command contract",
+)];
+
+const REPORTING_PERIOD_EXAMPLES: &[Example] = &[Example::new(
+    "cad-cli schema reporting-period",
+    "Print the reporting-period command contract",
+)];
+
+const ORGANIZATIONAL_UNIT_EXAMPLES: &[Example] = &[Example::new(
+    "cad-cli schema organizational-unit",
+    "Print the organizational-unit command contract",
+)];
+
 #[derive(Debug, Subcommand)]
 enum Command {
     /// List resources with schemas available from this CLI.
+    #[command(after_long_help = help::examples(LIST_EXAMPLES))]
     List,
     /// Print the CLI schema for company activity categories.
+    #[command(after_long_help = help::examples(ACTIVITY_CATEGORY_EXAMPLES))]
     ActivityCategory,
     /// Print the CLI schema for company activity groups.
+    #[command(after_long_help = help::examples(ACTIVITY_GROUP_EXAMPLES))]
     ActivityGroup,
     /// Print the CLI schema for session-level companies.
+    #[command(after_long_help = help::examples(COMPANY_EXAMPLES))]
     Company,
     /// Print the CLI schema for reusable session-level company templates.
+    #[command(after_long_help = help::examples(COMPANY_TEMPLATE_EXAMPLES))]
     CompanyTemplate,
     /// Print the CLI schema for the singleton company benchmark.
+    #[command(after_long_help = help::examples(BENCHMARK_EXAMPLES))]
     Benchmark,
     /// Print the CLI schema for company reporting periods.
+    #[command(after_long_help = help::examples(REPORTING_PERIOD_EXAMPLES))]
     ReportingPeriod,
     /// Print the CLI schema for company organizational units.
+    #[command(after_long_help = help::examples(ORGANIZATIONAL_UNIT_EXAMPLES))]
     OrganizationalUnit,
 }
 

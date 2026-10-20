@@ -12,6 +12,7 @@ use serde_json::{Map, Value, json};
 
 use crate::app::context::CommandContext;
 use crate::cli::args::{IdArgs, IdInputArgs};
+use crate::cli::help::{self, Example};
 use crate::error::CliError;
 use crate::output::to_value;
 
@@ -22,16 +23,46 @@ pub struct Group {
     pub(crate) command: Command,
 }
 
+const LIST_EXAMPLES: &[Example] = &[Example::new(
+    "cad-cli activity-category list",
+    "List activity categories with their measurement counts",
+)];
+
+const UPDATE_EXAMPLES: &[Example] = &[Example::new(
+    "cad-cli activity-category update 00000000-0000-0000-0000-000000000001 --input category.json",
+    "Update an activity category from a file",
+)];
+
+const DELETE_EXAMPLES: &[Example] = &[
+    Example::new(
+        "cad-cli activity-category delete 00000000-0000-0000-0000-000000000001",
+        "Delete an activity category after a confirmation prompt",
+    ),
+    Example::new(
+        "cad-cli activity-category delete 00000000-0000-0000-0000-000000000001 --yes",
+        "Delete without prompting, e.g. from a script",
+    ),
+];
+
+const DUPLICATE_EXAMPLES: &[Example] = &[Example::new(
+    "cad-cli activity-category duplicate 00000000-0000-0000-0000-000000000001",
+    "Copy an activity category and print the copy",
+)];
+
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     /// List activity categories for the selected company, including measurement counts.
+    #[command(after_long_help = help::examples(LIST_EXAMPLES))]
     List,
 
     /// Update an activity category from JSON --input <file|-> and return it.
+    #[command(after_long_help = help::examples(UPDATE_EXAMPLES))]
     Update(IdInputArgs<ActivityCategoryId>),
     /// Delete an activity category after confirmation.
+    #[command(after_long_help = help::examples(DELETE_EXAMPLES))]
     Delete(IdArgs<ActivityCategoryId>),
     /// Duplicate an activity category and return the copied category.
+    #[command(after_long_help = help::examples(DUPLICATE_EXAMPLES))]
     Duplicate(IdArgs<ActivityCategoryId>),
 }
 

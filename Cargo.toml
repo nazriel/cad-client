@@ -26,6 +26,7 @@ schemars = { version = "1.2.1", features = ["chrono04"] }
 secrecy = { version = "0.10.3", features = ["serde"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
+shlex = "2.0.1"
 strum = { version = "0.28.0", features = ["derive"] }
 tempfile = "3.23.0"
 thiserror = "2.0.17"

@@ -10,6 +10,7 @@ use serde_json::{Map, Value, json};
 
 use crate::app::context::CommandContext;
 use crate::cli::args::InputArgs;
+use crate::cli::help::{self, Example};
 use crate::error::CliError;
 use crate::output::to_value;
 
@@ -71,11 +72,35 @@ impl From<CompanyCreationTemplate> for CompanyTemplateType {
     }
 }
 
+const LIST_EXAMPLES: &[Example] = &[
+    Example::new(
+        "cad-cli company list",
+        "List the companies the API key can access",
+    ),
+    Example::new(
+        "cad-cli company list --output jsonl",
+        "Print one company per line for scripts",
+    ),
+];
+
+const CREATE_EXAMPLES: &[Example] = &[
+    Example::new(
+        "cad-cli company create --input company.json",
+        "Create a company after a confirmation prompt",
+    ),
+    Example::new(
+        "cad-cli company create --input company.json --yes",
+        "Create a company without prompting, e.g. from a script",
+    ),
+];
+
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     /// List companies accessible to the authenticated user.
+    #[command(after_long_help = help::examples(LIST_EXAMPLES))]
     List,
     /// Create a company from JSON --input <file|-> after confirmation; this may affect the next invoice.
+    #[command(after_long_help = help::examples(CREATE_EXAMPLES))]
     Create(InputArgs),
 }
 

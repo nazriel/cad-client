@@ -10,6 +10,7 @@ use serde_json::{Map, Value, json};
 
 use crate::app::context::CommandContext;
 use crate::cli::args::{IdArgs, IdInputArgs, InputArgs};
+use crate::cli::help::{self, Example};
 use crate::error::CliError;
 use crate::output::to_value;
 
@@ -20,15 +21,45 @@ pub struct Group {
     pub(crate) command: Command,
 }
 
+const LIST_EXAMPLES: &[Example] = &[Example::new(
+    "cad-cli activity-group list",
+    "List the activity groups of the company",
+)];
+
+const CREATE_EXAMPLES: &[Example] = &[Example::new(
+    "cad-cli activity-group create --input group.json",
+    "Create an activity group from a file",
+)];
+
+const UPDATE_EXAMPLES: &[Example] = &[Example::new(
+    "cad-cli activity-group update 00000000-0000-0000-0000-000000000001 --input group.json",
+    "Update an activity group from a file",
+)];
+
+const DELETE_EXAMPLES: &[Example] = &[
+    Example::new(
+        "cad-cli activity-group delete 00000000-0000-0000-0000-000000000001",
+        "Delete an activity group after a confirmation prompt",
+    ),
+    Example::new(
+        "cad-cli activity-group delete 00000000-0000-0000-0000-000000000001 --yes",
+        "Delete without prompting, e.g. from a script",
+    ),
+];
+
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     /// List activity groups for the selected company.
+    #[command(after_long_help = help::examples(LIST_EXAMPLES))]
     List,
     /// Create an activity group from JSON --input <file|-> and return it.
+    #[command(after_long_help = help::examples(CREATE_EXAMPLES))]
     Create(InputArgs),
     /// Update an activity group from JSON --input <file|-> and return it.
+    #[command(after_long_help = help::examples(UPDATE_EXAMPLES))]
     Update(IdInputArgs<ActivityGroupId>),
     /// Delete an activity group after confirmation.
+    #[command(after_long_help = help::examples(DELETE_EXAMPLES))]
     Delete(IdArgs<ActivityGroupId>),
 }
 

@@ -21,8 +21,29 @@ use serde_json::Value;
 
 use crate::app::context::CommandContext;
 use crate::app::platform::Platform;
+use crate::cli::help::{self, Example};
 use crate::error::CliError;
 use crate::support::terminal::Terminal;
+
+const COMPLETIONS_EXAMPLES: &[Example] = &[
+    Example::new(
+        "cad-cli completions zsh > \"${fpath[1]}/_cad-cli\"",
+        "Install zsh completions",
+    ),
+    Example::new(
+        "cad-cli completions bash > /usr/local/etc/bash_completion.d/cad-cli",
+        "Install bash completions",
+    ),
+    Example::new(
+        "cad-cli completions fish > ~/.config/fish/completions/cad-cli.fish",
+        "Install fish completions",
+    ),
+];
+
+const MAN_EXAMPLES: &[Example] = &[Example::new(
+    "cad-cli man > /usr/local/share/man/man1/cad-cli.1",
+    "Install the manual page",
+)];
 
 /// Top-level `cad-cli` command.
 #[derive(Debug, Subcommand)]
@@ -56,8 +77,10 @@ pub enum Command {
     /// Print a machine-readable schema for a CLI resource.
     Schema(schema::Group),
     /// Print a shell completion script.
+    #[command(after_long_help = help::examples(COMPLETIONS_EXAMPLES))]
     Completions(generate::CompletionsArgs),
     /// Print the manual page in roff format.
+    #[command(after_long_help = help::examples(MAN_EXAMPLES))]
     Man,
 }
 
