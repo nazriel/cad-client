@@ -1,0 +1,37 @@
+name: Security
+
+# Daily triage of what changes without a commit: new RustSec advisories
+# against Cargo.lock, and known-vulnerable or impostor action pins. Also runs
+# when a pull request touches dependencies or workflows. A failed scheduled
+# run notifies by email; Dependabot raises fix PRs for the same advisories.
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  pull_request:
+    paths:
+      - "**/Cargo.toml"
+      - Cargo.lock
+      - deny.toml
+      - .github/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Audit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
+        with:
+          version: 2026.10.11
+          install_args: cargo-deny zizmor
+
+      - run: mise run audit --online
+        env:
+          GH_TOKEN: ${{ github.token }}

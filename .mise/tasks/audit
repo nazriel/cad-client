@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+#MISE description="Check dependencies against the RustSec advisory database and audit GitHub workflows"
+#USAGE flag "--online" help="Also run zizmor's audits that query GitHub (needs GH_TOKEN)"
+set -euo pipefail
+
+cargo-deny --locked --workspace check advisories
+
+zizmor_args=(--no-progress)
+if [[ "${usage_online:-false}" == "true" ]]; then
+  zizmor_args+=(--gh-token "${GH_TOKEN:?set GH_TOKEN for online audits}")
+else
+  zizmor_args+=(--offline)
+fi
+zizmor "${zizmor_args[@]}" .github
