@@ -50,6 +50,11 @@ pub(crate) trait Terminal: Send + Sync {
     /// Writes a user-facing status message to stderr.
     fn status(&self, kind: StatusKind, message: &str) -> Result<(), CliError>;
 
+    /// Writes a block of reading matter, such as release notes, to stderr
+    /// under a heading. It is for a person at a terminal: when stderr is not
+    /// one, nothing is written.
+    fn notes(&self, heading: &str, body: &str) -> Result<(), CliError>;
+
     /// Confirms a consequential operation, unless confirmation was explicitly skipped.
     fn confirm(&self, prompt: &str, assume_yes: bool) -> Result<(), CliError>;
 
@@ -81,6 +86,20 @@ impl Terminal for ProcessTerminal {
             writeln!(stderr, "{} {message}", kind.styled_symbol())?;
         } else {
             writeln!(stderr, "{message}")?;
+        }
+        Ok(())
+    }
+
+    fn notes(&self, heading: &str, body: &str) -> Result<(), CliError> {
+        let stderr = std::io::stderr();
+        let mut stderr = stderr.lock();
+        if !stderr.is_terminal() {
+            return Ok(());
+        }
+        let heading = console::style(heading).bold().for_stderr();
+        writeln!(stderr, "\n{heading}")?;
+        if !body.is_empty() {
+            writeln!(stderr, "{body}")?;
         }
         Ok(())
     }
@@ -189,6 +208,10 @@ impl Progress for () {}
 #[cfg(test)]
 impl Terminal for SilentTerminal {
     fn status(&self, _kind: StatusKind, _message: &str) -> Result<(), CliError> {
+        Ok(())
+    }
+
+    fn notes(&self, _heading: &str, _body: &str) -> Result<(), CliError> {
         Ok(())
     }
 

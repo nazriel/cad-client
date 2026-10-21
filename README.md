@@ -79,6 +79,33 @@ From a checkout:
 cargo install --path crates/cad-client --bin cad-cli
 ```
 
+### Update
+
+An installed binary updates itself in place. `cad-cli update` downloads the
+latest release archive for the running platform, verifies it against the
+release's `SHA256SUMS` like the installers do, runs the new binary once to
+check it reports the release version, and only then atomically replaces the
+executable. In a terminal it then prints the release's changes on stderr. It
+needs no credentials, but it does need write access to the directory the
+binary lives in.
+
+```console
+cad-cli update            # install the latest release if it is newer
+cad-cli update --check    # only report: exit 0 when up to date, 10 when not
+cad-cli update --force    # reinstall the latest release regardless
+```
+
+In a terminal, other commands also check for a newer release in the
+background, at most once a day (or an hour after a check that got no answer),
+and print a one-line notice on stderr after they finish. The check never delays a command and stays silent when it fails.
+It is off when stderr is not a terminal, with `--output json` or `jsonl`, and
+when `CI` or `CAD_CLI_NO_UPDATE_CHECK` is set to a true value: anything but
+empty, `0`, `false`, `no` or `off`, so `CAD_CLI_NO_UPDATE_CHECK=1` turns it off
+and `CAD_CLI_NO_UPDATE_CHECK=0` leaves it on. The time of
+the last check and the version it found are kept in `cad-cli/update-check.json`
+under the user cache directory: `$XDG_CACHE_HOME` (default `~/.cache`) on
+Linux, `~/Library/Caches` on macOS and `%LOCALAPPDATA%` on Windows.
+
 ## Configure
 
 Credentials are read only from the environment. Every platform request uses
@@ -130,6 +157,7 @@ same in the terminal.
 | [`schema`](docs/cli/schema.md) | Print a machine-readable schema for a CLI resource |
 | [`completions`](docs/cli/completions.md) | Print a shell completion script |
 | [`man`](docs/cli/man.md) | Print the manual page in roff format |
+| [`update`](docs/cli/update.md) | Update cad-cli to the latest release |
 <!-- cli-commands:end -->
 
 ## Input and output

@@ -26,6 +26,7 @@ cad-cli [OPTIONS] <COMMAND>
 | [`schema`](schema.md) | Print a machine-readable schema for a CLI resource |
 | [`completions`](completions.md) | Print a shell completion script |
 | [`man`](man.md) | Print the manual page in roff format |
+| [`update`](update.md) | Update cad-cli to the latest release |
 
 ## Global options
 
@@ -52,6 +53,7 @@ Every command accepts these options.
 | `CAD_COMPANY_ID` | Accessible company to act on when --company-id is not given. |
 | `RUST_LOG` | Diagnostic logging on stderr; cad_api=debug logs one line per platform request. |
 | `NO_COLOR` | Disable colour in tables and status messages. |
+| `CAD_CLI_NO_UPDATE_CHECK` | Set to 1 (or true, yes, on) to stop the once-a-day check for a newer release; empty, 0, false, no and off leave it on. The check is also off when CI is set to a true value, with --output json or jsonl, and when stderr is not a terminal. |
 
 ## Examples
 

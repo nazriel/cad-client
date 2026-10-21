@@ -49,6 +49,10 @@ pub enum CliError {
     Timeout(String),
     #[error("operation cancelled")]
     Cancelled,
+    /// A release could not be installed: its metadata, checksum list or
+    /// archive was not what `cad-cli update` requires.
+    #[error("update failed: {0}")]
+    Update(String),
 }
 
 impl CliError {
@@ -91,7 +95,8 @@ impl CliError {
             | Self::Input(_)
             | Self::Io(_)
             | Self::Timeout(_)
-            | Self::Cancelled => None,
+            | Self::Cancelled
+            | Self::Update(_) => None,
         }
     }
 
@@ -110,7 +115,9 @@ impl CliError {
         match self {
             Self::Config { .. } | Self::AuthConfig(_) | Self::Input(_) => ExitCode::from(2),
             Self::Authentication { .. } => ExitCode::from(3),
-            Self::Api { .. } | Self::Timeout(_) => ExitCode::from(4),
+            // A release that cannot be installed is a remote service
+            // returning something unusable, like a failed API operation.
+            Self::Api { .. } | Self::Timeout(_) | Self::Update(_) => ExitCode::from(4),
             Self::Transport { .. } | Self::Io(_) => ExitCode::from(5),
             Self::Cancelled => ExitCode::from(130),
         }
