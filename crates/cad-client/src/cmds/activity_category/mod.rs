@@ -52,17 +52,17 @@ const DUPLICATE_EXAMPLES: &[Example] = &[Example::new(
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     /// List activity categories for the selected company, including measurement counts.
-    #[command(after_long_help = help::examples(LIST_EXAMPLES))]
+    #[command(after_help = help::examples(LIST_EXAMPLES))]
     List,
 
     /// Update an activity category from JSON --input <file|-> and return it.
-    #[command(after_long_help = help::examples(UPDATE_EXAMPLES))]
+    #[command(after_help = help::examples(UPDATE_EXAMPLES))]
     Update(IdInputArgs<ActivityCategoryId>),
     /// Delete an activity category after confirmation.
-    #[command(after_long_help = help::examples(DELETE_EXAMPLES))]
+    #[command(after_help = help::examples(DELETE_EXAMPLES))]
     Delete(IdArgs<ActivityCategoryId>),
     /// Duplicate an activity category and return the copied category.
-    #[command(after_long_help = help::examples(DUPLICATE_EXAMPLES))]
+    #[command(after_help = help::examples(DUPLICATE_EXAMPLES))]
     Duplicate(IdArgs<ActivityCategoryId>),
 }
 

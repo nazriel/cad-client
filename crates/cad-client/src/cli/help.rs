@@ -46,7 +46,8 @@ const HEADING: Style = Style::new().bold().underline();
 const LITERAL: Style = Style::new().bold();
 const NOTE: Style = Style::new().dimmed();
 
-/// Renders an `Examples:` section for `after_long_help`.
+/// Renders an `Examples:` section for `after_help`, which both `-h` and
+/// `--help` show.
 pub(crate) fn examples(examples: &[Example]) -> StyledStr {
     let mut help = String::new();
     push_examples(&mut help, examples);
@@ -90,7 +91,8 @@ fn push_examples(help: &mut String, examples: &[Example]) {
     }
 }
 
-/// A section recovered from the plain-text rendering of `after_long_help`.
+/// A section recovered from the plain-text rendering of `after_help` or
+/// `after_long_help`.
 #[cfg(test)]
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Section {
@@ -199,8 +201,10 @@ mod tests {
     }
 
     fn visit(command: &clap::Command, path: &mut Vec<String>, checked: &mut usize) {
+        // The short help: examples must be visible with `-h` as well, and
+        // `--help` falls back to it when a command sets no long variant.
         let examples = command
-            .get_after_long_help()
+            .get_after_help()
             .map(|help| super::parse(&help.to_string()))
             .unwrap_or_default()
             .into_iter()

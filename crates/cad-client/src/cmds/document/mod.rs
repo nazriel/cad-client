@@ -45,10 +45,10 @@ const DOWNLOAD_EXAMPLES: &[Example] = &[
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     /// Stream a local file to CAD object storage.
-    #[command(after_long_help = help::examples(UPLOAD_EXAMPLES))]
+    #[command(after_help = help::examples(UPLOAD_EXAMPLES))]
     Upload(upload::Options),
     /// Download a document using a presigned storage URL.
-    #[command(after_long_help = help::examples(DOWNLOAD_EXAMPLES))]
+    #[command(after_help = help::examples(DOWNLOAD_EXAMPLES))]
     Download(download::Options),
 }
 

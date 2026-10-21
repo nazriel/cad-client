@@ -28,7 +28,7 @@ const SHOW_EXAMPLES: &[Example] = &[
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     /// Show the authenticated machine identity and company selection.
-    #[command(after_long_help = help::examples(SHOW_EXAMPLES))]
+    #[command(after_help = help::examples(SHOW_EXAMPLES))]
     Show,
 }
 

@@ -59,19 +59,19 @@ const DELETE_EXAMPLES: &[Example] = &[
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     /// List custom options, optionally filtering by field.
-    #[command(after_long_help = help::examples(LIST_EXAMPLES))]
+    #[command(after_help = help::examples(LIST_EXAMPLES))]
     List(ListOptions),
     /// Create a custom option from JSON input.
-    #[command(after_long_help = help::examples(CREATE_EXAMPLES))]
+    #[command(after_help = help::examples(CREATE_EXAMPLES))]
     Create(InputArgs),
     /// Create up to 50 custom options from a JSON array.
-    #[command(after_long_help = help::examples(CREATE_BATCH_EXAMPLES))]
+    #[command(after_help = help::examples(CREATE_BATCH_EXAMPLES))]
     CreateBatch(InputArgs),
     /// Fully replace a custom option from JSON input.
-    #[command(after_long_help = help::examples(REPLACE_EXAMPLES))]
+    #[command(after_help = help::examples(REPLACE_EXAMPLES))]
     Replace(IdInputArgs<CustomOptionId>),
     /// Delete a custom option.
-    #[command(after_long_help = help::examples(DELETE_EXAMPLES))]
+    #[command(after_help = help::examples(DELETE_EXAMPLES))]
     Delete(IdArgs<CustomOptionId>),
 }
 

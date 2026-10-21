@@ -97,10 +97,10 @@ const CREATE_EXAMPLES: &[Example] = &[
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     /// List companies accessible to the authenticated user.
-    #[command(after_long_help = help::examples(LIST_EXAMPLES))]
+    #[command(after_help = help::examples(LIST_EXAMPLES))]
     List,
     /// Create a company from JSON --input <file|-> after confirmation; this may affect the next invoice.
-    #[command(after_long_help = help::examples(CREATE_EXAMPLES))]
+    #[command(after_help = help::examples(CREATE_EXAMPLES))]
     Create(InputArgs),
 }
 

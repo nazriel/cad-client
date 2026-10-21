@@ -131,6 +131,8 @@ fn render_help_logo(colour: bool) -> String {
     // when the build names a commit through CAD_CLI_BUILD_COMMIT.
     version = env!("CAD_CLI_BUILD_VERSION"),
     about = None,
+    // `-h` shows the examples; `--help` adds the environment variables.
+    after_help = help::examples(EXAMPLES),
     after_long_help = help::environment_and_examples(ENVIRONMENT, EXAMPLES)
 )]
 pub struct Cli {

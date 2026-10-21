@@ -49,13 +49,13 @@ const UPDATE_EXAMPLES: &[Example] = &[
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     /// Read and return the company's benchmark.
-    #[command(after_long_help = help::examples(READ_EXAMPLES))]
+    #[command(after_help = help::examples(READ_EXAMPLES))]
     Read,
     /// Create or initialize the company benchmark from JSON --input <file|-> and return it.
-    #[command(after_long_help = help::examples(CREATE_EXAMPLES))]
+    #[command(after_help = help::examples(CREATE_EXAMPLES))]
     Create(InputArgs),
     /// Update the company benchmark from JSON --input <file|-> and return it.
-    #[command(after_long_help = help::examples(UPDATE_EXAMPLES))]
+    #[command(after_help = help::examples(UPDATE_EXAMPLES))]
     Update(InputArgs),
 }
 

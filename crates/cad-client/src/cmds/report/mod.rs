@@ -50,13 +50,13 @@ const CREATE_EXAMPLES: &[Example] = &[
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     /// List reports ordered from newest to oldest.
-    #[command(after_long_help = help::examples(LIST_EXAMPLES))]
+    #[command(after_help = help::examples(LIST_EXAMPLES))]
     List(ListOptions),
     /// Get one report and its progress counters.
-    #[command(after_long_help = help::examples(GET_EXAMPLES))]
+    #[command(after_help = help::examples(GET_EXAMPLES))]
     Get(IdArgs<ReportId>),
     /// Create a report from JSON input.
-    #[command(after_long_help = help::examples(CREATE_EXAMPLES))]
+    #[command(after_help = help::examples(CREATE_EXAMPLES))]
     Create(create::Options),
 }
 

@@ -64,28 +64,28 @@ const ORGANIZATIONAL_UNIT_EXAMPLES: &[Example] = &[Example::new(
 #[derive(Debug, Subcommand)]
 enum Command {
     /// List resources with schemas available from this CLI.
-    #[command(after_long_help = help::examples(LIST_EXAMPLES))]
+    #[command(after_help = help::examples(LIST_EXAMPLES))]
     List,
     /// Print the CLI schema for company activity categories.
-    #[command(after_long_help = help::examples(ACTIVITY_CATEGORY_EXAMPLES))]
+    #[command(after_help = help::examples(ACTIVITY_CATEGORY_EXAMPLES))]
     ActivityCategory,
     /// Print the CLI schema for company activity groups.
-    #[command(after_long_help = help::examples(ACTIVITY_GROUP_EXAMPLES))]
+    #[command(after_help = help::examples(ACTIVITY_GROUP_EXAMPLES))]
     ActivityGroup,
     /// Print the CLI schema for session-level companies.
-    #[command(after_long_help = help::examples(COMPANY_EXAMPLES))]
+    #[command(after_help = help::examples(COMPANY_EXAMPLES))]
     Company,
     /// Print the CLI schema for reusable session-level company templates.
-    #[command(after_long_help = help::examples(COMPANY_TEMPLATE_EXAMPLES))]
+    #[command(after_help = help::examples(COMPANY_TEMPLATE_EXAMPLES))]
     CompanyTemplate,
     /// Print the CLI schema for the singleton company benchmark.
-    #[command(after_long_help = help::examples(BENCHMARK_EXAMPLES))]
+    #[command(after_help = help::examples(BENCHMARK_EXAMPLES))]
     Benchmark,
     /// Print the CLI schema for company reporting periods.
-    #[command(after_long_help = help::examples(REPORTING_PERIOD_EXAMPLES))]
+    #[command(after_help = help::examples(REPORTING_PERIOD_EXAMPLES))]
     ReportingPeriod,
     /// Print the CLI schema for company organizational units.
-    #[command(after_long_help = help::examples(ORGANIZATIONAL_UNIT_EXAMPLES))]
+    #[command(after_help = help::examples(ORGANIZATIONAL_UNIT_EXAMPLES))]
     OrganizationalUnit,
 }
 
