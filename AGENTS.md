@@ -23,5 +23,6 @@ Read [`docs/architecture.md`](docs/architecture.md) before changing application 
 - Start from the development OpenAPI contract, but expose clean SDK/CLI semantics rather than transport quirks.
 - Use typed `serde` models and `schemars::JsonSchema` for externally supplied or returned JSON. Generate `cad-cli schema <domain>` from the exact CLI input/output types and add metadata only for behavior types cannot express.
 - Do not add conventional CRUD commands that the API does not support. For singleton resources, expose `read`, `create`, and/or `update` as appropriate and hide collection wrappers and server-owned IDs.
-- Validate focused tests first, then run `./scripts/check.sh` for cross-cutting changes.
+- Validate focused tests first, then run `mise run check` (lint, rustdoc and the full test suite) for cross-cutting changes.
+- Every runnable command declares examples in its long help (`after_long_help = help::examples(...)`); a test parses them. After changing a command, its arguments, help or examples, run `mise run docs:cli` to regenerate `docs/cli/` and the README command table, or the docs freshness test fails.
 - Before every commit, run the local quality gateway: `mise run lint`, then `mise run audit --online`.

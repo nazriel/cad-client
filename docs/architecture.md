@@ -190,7 +190,7 @@ When adding a domain:
 4. add an offline, domain-owned schema when the domain accepts or returns JSON
    useful to automation;
 5. update user documentation and tests;
-6. run focused tests, then `./scripts/check.sh`.
+6. run focused tests, then `mise run docs:cli` and `mise run check`.
 
 The authoritative detailed checklist for API-domain work is
 [`.agents/skills/cad-cli-domain/SKILL.md`](../.agents/skills/cad-cli-domain/SKILL.md).
