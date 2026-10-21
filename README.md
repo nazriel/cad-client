@@ -111,39 +111,101 @@ Windows.
 
 Every platform request uses `Authorization: Bearer <Key ID>.<Secret>`, the
 API key you create on the platform's API keys page
-(`<server>/app/user-account-settings/api-keys`). Pick a server first: with
-`--environment staging` or `--environment production`, with `--server-url`, or
-with `CAD_SERVER_URL` or `CAD_ENV`.
+(`<server>/app/user-account-settings/api-keys`). `cad-cli use` keeps the
+servers you work with, the key for each and the company to act on, so that a
+command needs no flags.
 
-### Log in
+### Profiles
+
+A profile is a name for a server, the login made there and the company to act
+on. `cad-cli use profile <name>` is the first step:
 
 ```console
-cad-cli --environment staging auth login
+cad-cli use profile production
 ```
 
-`auth login` prints the API keys page and opens it in your browser. The page
-shows the **Key ID** (a UUID) and the **Secret** (`cad_aks_` followed by 43
-letters, digits, `-` or `_`) as two values; paste each when asked. A malformed
-value is refused with the reason and asked again, and the Secret is masked with
-`*` as you type. Esc or Ctrl-C cancels. The key is checked with the server
-before anything is saved, and a rejected key is not stored. Create the key on
-the page first: it cannot be created from the command line.
+A name that is new creates the profile and asks for its server. `production`,
+`staging` and `dev` suggest `https://app.carbonaltdelete.eu`,
+`https://staging.carbonaltdelete.eu` and `https://dev.carbonaltdelete.eu`:
+press Enter to take it. For any other name, or to answer in advance, pass
+`--url`. A server on `localhost` or another loopback host needs plain HTTP,
+which is refused unless you also pass `--allow-insecure-http`; the profile
+remembers it:
+
+```console
+cad-cli use profile local --url http://localhost:5001 --allow-insecure-http
+```
+
+A profile name is 1 to 32 characters of `a-z`, `0-9`, `-` and `_`. Several
+profiles may use the same server. Naming a profile that exists makes it the
+active one, which every command uses unless `--profile` or `CAD_PROFILE` names
+another.
+
+A profile with no login is offered one. This prints the API keys page and opens
+it in your browser. The page shows the **Key ID** (a UUID) and the **Secret**
+(`cad_aks_` followed by 43 letters, digits, `-` or `_`) as two values; paste
+each when asked. A malformed value is refused with the reason and asked again,
+and the Secret is masked with `*` as you type. Esc or Ctrl-C cancels. The key is
+checked with the server before anything is saved, and a rejected key is not
+stored. Create the key on the page first: it cannot be created from the command
+line.
 
 - `--no-browser` only prints the page address.
 - `--with-token` reads `<Key ID>.<Secret>` from standard input instead of
   asking, for scripts and machines without a terminal:
-  `printf '%s.%s' "$KEY_ID" "$SECRET" | cad-cli --environment staging auth login --with-token`.
-- `cad-cli auth status` shows which credentials commands use for the selected
-  server and checks them with the server.
-- `cad-cli auth logout` forgets the key stored for the selected server. The key
-  itself stays valid until you revoke it on the API keys page.
+  `printf '%s.%s' "$KEY_ID" "$SECRET" | cad-cli use profile staging --with-token`.
+- `--login` logs in again, for a profile that already has a login.
+- Without a terminal nothing is asked: a new profile of another name than
+  `production`, `staging` or `dev` stops with exit status 2 and asks for
+  `--url`, and a profile with no login is left without one and says how to give
+  it one.
 
-A login belongs to one server origin (`scheme://host[:port]`): a key stored for
-`https://staging.carbonaltdelete.eu` is never sent to another host, nor to
-another port of the same host. `auth status` and `auth logout` act on the
-selected server only.
+Once the login is made, the company is chosen: the only company the key can act
+on is taken, and with several you pick one in a terminal. See
+[Companies](#companies) to choose or change it.
+
+```console
+cad-cli use                      # every profile, the active one marked
+cad-cli use --check              # check what a command would use with the server
+cad-cli use profile staging --forget
+```
+
+`cad-cli use` lists the profiles, sorted by name, with the server, the account
+and the company of each; `active` marks the profile `use profile` last switched
+to, `selected` the one a command run now would use, which differs when
+`--profile`, `CAD_PROFILE` or a server given with `--server-url` or
+`CAD_SERVER_URL` picks another. It reads only your files and makes no request.
+`cad-cli use --check` resolves the profile, server, login and company the way a
+command does, connects once, and prints who the login is for and which company
+is selected, with where each came from; it does not fail for a missing
+company. `use profile <name> --forget` forgets the profile and the key stored
+for it. The key itself stays valid until you revoke it on the API keys page.
+
+### Companies
+
+`cad-cli use company <name|ID>` chooses the company the profile acts on:
+
+```console
+cad-cli use company "Acme GmbH"
+cad-cli use company 00000000-0000-0000-0000-000000000001
+```
+
+A name is matched exactly, ignoring case and surrounding spaces; a name several
+companies share is refused with their IDs. The company must be one the key can
+act on: it is checked with the server before it is saved, and it is kept in the
+profile, so `cad-cli --profile staging use company …` chooses it for another
+profile without switching to it.
+
+A command that acts on a company stops with exit status 2 when none is
+selected, rather than guess, and says how to choose one. Pass `--company-id`
+for one command, or set `CAD_COMPANY_ID` for one shell; both take precedence
+over the profile's company. `company` and `company-template` act on the
+session, not on a company, and need none.
 
 ### Where the login is kept
+
+Each profile has its own stored login, which is used only for the server it
+was made for.
 
 | Where | Used when |
 |---|---|
@@ -159,53 +221,105 @@ holds the Key ID and the Secret as plain text, which is why the keyring is
 preferred.
 
 When the keyring cannot be used (no Secret Service is running, it is locked, or
-this is a headless machine), `auth login` says why and asks
+this is a headless machine), `use profile` says why and asks
 `Store the credentials in <path> instead, readable only by you? (y/N)`. `--yes`
 does not answer it. Without a terminal it stops with exit status 2 and stores
 nothing, unless you pass `--insecure-storage`, which skips the keyring and
-writes the file. One origin has one stored login: saving it in one place removes
+writes the file. A profile has one stored login: saving it in one place removes
 it from the other.
+
+Each stored login records the server origin (`scheme://host[:port]`) it was
+made for. A key for `https://staging.carbonaltdelete.eu` is never sent to
+another host, nor to another port of the same host, whatever the profile is
+called.
+
+`profiles.json` sits beside `credentials.json`. It holds each profile's server,
+whether it may use plain HTTP, the Key ID, account ID, e-mail and storage place
+of its login, and its company, plus which profile is active. It holds no
+secret.
 
 Set `CAD_CLI_KEYRING=0` (also `false`, `no` or `off`) to never touch the system
 keyring and use only the file, for example on a server without a desktop
 session.
 
-### Environment variables
+### Choosing per command or per shell, and in scripts
 
-`CAD_API_KEY` and `CAD_API_SECRET` still work, and take precedence:
+`cad-cli use` changes the active profile and the profile's company for every
+shell you have, until the next `use`. To choose for one command or one shell
+instead, use:
+
+| For | Per command | Per shell |
+|---|---|---|
+| The profile | `--profile <name>` | `CAD_PROFILE` |
+| The server | `--server-url <origin>` | `CAD_SERVER_URL` |
+| The login | | `CAD_API_KEY` and `CAD_API_SECRET` |
+| The company | `--company-id <ID>` | `CAD_COMPANY_ID` |
+
+A run with no profile file at all, as in CI, needs only the variables:
 
 ```console
 export CAD_SERVER_URL=https://staging.carbonaltdelete.eu
 export CAD_API_KEY=00000000-0000-0000-0000-000000000000
 export CAD_API_SECRET='...'
+export CAD_COMPANY_ID=00000000-0000-0000-0000-000000000001
 ```
 
-The order is fixed:
+**Programs and AI agents** should not call `cad-cli use` to choose what a
+command acts on: it changes the selection for every shell of the user, a person
+at another terminal included. Pass `--profile` and `--company-id`, or set the
+variables above, on each command instead. Nothing prompts without a terminal,
+and a failure names the command or flag that fixes it; with `--output json`
+that is the `hint` of the error (see [Input and output](#input-and-output)).
+
+The order is fixed. Each choice is made from the first source that has it:
+
+The profile:
+
+1. `--profile`, then `CAD_PROFILE`. The profile must exist, and a server given
+   as well must be its own: `profile <name> logs in to <origin>, not <other>`
+   is an error.
+2. Otherwise, with a server given (`--server-url`, then `CAD_SERVER_URL`), the
+   profile whose server it is: the active profile if it matches, else the only
+   profile that does. Several matching profiles are an error asking for
+   `--profile`; none means no profile, so no stored login and no stored company.
+3. Otherwise the active profile.
+
+The server:
+
+1. `--server-url`, then `CAD_SERVER_URL`.
+2. The server of the selected profile.
+3. Otherwise the command stops with exit status 2 and asks you to run
+   `cad-cli use profile <name>`; there is deliberately no implicit server
+   default.
+
+The credentials:
 
 1. If `CAD_API_KEY` or `CAD_API_SECRET` is set, the environment decides alone,
    and a missing half is an error. A stored login is not consulted.
-2. Otherwise the login in the system keyring, unless `CAD_CLI_KEYRING=0`. A
-   keyring that cannot answer is not an error: the lookup goes on.
-3. Then the login in the credentials file.
+2. Otherwise the selected profile's login in the system keyring, unless
+   `CAD_CLI_KEYRING=0`. A keyring that cannot answer is not an error: the lookup
+   goes on.
+3. Then its login in the credentials file.
 4. Otherwise the command stops with exit status 2 and asks you to run
-   `cad-cli auth login` or set the variables.
+   `cad-cli use profile <name> --login` or set the variables. A login made for
+   another server than the one selected is never used.
 
-Shell completion finds credentials the same way.
+The company:
 
-Instead of `CAD_SERVER_URL`, select a preset with `--environment staging` or
-`--environment production`, or set `CAD_ENV` to the same value. Both accept the
-short aliases `stage` and `prod`. There is deliberately no implicit server
-default.
+1. `--company-id`.
+2. `CAD_COMPANY_ID`.
+3. The company of the selected profile.
+4. Otherwise a command that acts on a company stops with exit status 2.
 
-To select another accessible company, pass `--company-id` or set
-`CAD_COMPANY_ID`; the CLI sends it as `X-CAD-Company-Id`.
+Shell completion selects the same way.
 
 Every API request has a one-minute total budget; change it with
 `--request-timeout 90s`. Durations are written with an explicit unit and may
 combine several — `1500ms`, `90s`, `1m30s`, `30m` — a bare number is rejected
 rather than guessed at. The budget does not apply to document transfers, which
 may run as long as they keep making progress. Plain HTTP is rejected unless the
-server is a loopback host and `--allow-insecure-http` is passed.
+server is a loopback host and `--allow-insecure-http` is passed (or the profile
+was created with it).
 
 ## Commands
 
@@ -246,6 +360,26 @@ spinners and errors go to stderr, so `cad-cli company list > companies.txt` is
 always a clean capture. In a terminal the table is drawn with frames and the
 status line is coloured; piped anywhere else the same table is plain ASCII with
 no escape sequences, and `NO_COLOR=1` turns colour off everywhere.
+
+With `--output json` or `jsonl` a failure is one JSON object on a single line
+of stderr, and stdout stays empty:
+
+```json
+{"error":{"kind":"config","message":"no company is selected for profile staging","hint":"run `cad-cli use company <name|id>`, or pass --company-id or set CAD_COMPANY_ID","exitCode":2,"status":null,"details":null}}
+```
+
+- `kind` is one of `config`, `authConfig`, `authentication`, `api`,
+  `transport`, `timeout`, `input`, `io` or `update`. A cancelled prompt is not
+  reported as JSON.
+- `message` says what went wrong, without the hint.
+- `hint` is the command or flag that fixes it, or `null`.
+- `exitCode` is the process exit status, the same number the shell sees.
+- `status` is the HTTP status when the platform rejected a request, else
+  `null`; `details` is the error body the platform sent, if it sent one, else
+  `null`.
+
+Errors of the argument parser itself, such as an unknown command or option,
+come before the output format is known and stay plain text.
 
 Set `RUST_LOG=cad_api=debug` to print each platform request method, URL, and
 selected company ID to stderr.
@@ -496,9 +630,9 @@ roff manual page.
 `--company-id` and the reporting-period IDs of `reporting-period get`,
 `details`, `update` and `delete` are completed from the platform, with the
 company or period name shown beside each ID where the shell supports it. These
-lookups use the same configuration as any other command (your login or
-`CAD_API_KEY` and `CAD_API_SECRET`, the server, and `--company-id` or `CAD_COMPANY_ID` for
-reporting periods) and follow strict rules:
+lookups use the same configuration as any other command (the selected profile
+and its login, or `CAD_API_KEY` and `CAD_API_SECRET`, the server, and the
+company for reporting periods) and follow strict rules:
 
 - they never prompt and print nothing but candidates; without credentials or a
   reachable server the IDs are simply not offered;
