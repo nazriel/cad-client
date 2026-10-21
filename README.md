@@ -130,6 +130,7 @@ same in the terminal.
 | [`schema`](docs/cli/schema.md) | Print a machine-readable schema for a CLI resource |
 | [`completions`](docs/cli/completions.md) | Print a shell completion script |
 | [`man`](docs/cli/man.md) | Print the manual page in roff format |
+| [`update`](docs/cli/update.md) | Update cad-cli to the latest release |
 <!-- cli-commands:end -->
 
 ## Input and output
