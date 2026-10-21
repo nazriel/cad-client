@@ -133,23 +133,27 @@ impl StoredCredential {
     /// is never skipped. So is an entry that is damaged.
     pub(crate) fn from_value(profile: &ProfileName, value: Value) -> Result<Self, CliError> {
         let kind = value.get("kind").and_then(Value::as_str).ok_or_else(|| {
-            CliError::auth_config(format!(
-                "the stored credentials for profile {profile} have no kind; log in again with \
-                 `cad-cli use profile {profile} --login`"
-            ))
+            CliError::auth_config_with_hint(
+                format!("the stored credentials for profile {profile} have no kind"),
+                format!("log in again with `cad-cli use profile {profile} --login`"),
+            )
         })?;
         if serde_json::from_value::<Kind>(Value::from(kind)).is_err() {
-            return Err(CliError::auth_config(format!(
-                "the stored credentials for profile {profile} are of kind \"{kind}\", which \
-                 this version of cad-cli does not know; update cad-cli or log in again with \
-                 `cad-cli use profile {profile} --login`"
-            )));
+            return Err(CliError::auth_config_with_hint(
+                format!(
+                    "the stored credentials for profile {profile} are of kind \"{kind}\", which \
+                     this version of cad-cli does not know"
+                ),
+                format!(
+                    "update cad-cli or log in again with `cad-cli use profile {profile} --login`"
+                ),
+            ));
         }
         serde_json::from_value(value).map_err(|error| {
-            CliError::auth_config(format!(
-                "the stored credentials for profile {profile} are damaged ({error}); log in \
-                 again with `cad-cli use profile {profile} --login`"
-            ))
+            CliError::auth_config_with_hint(
+                format!("the stored credentials for profile {profile} are damaged ({error})"),
+                format!("log in again with `cad-cli use profile {profile} --login`"),
+            )
         })
     }
 }
@@ -389,10 +393,10 @@ fn entry_text(credential: &StoredCredential) -> SecretString {
 
 fn parse_entry(profile: &ProfileName, text: &SecretString) -> Result<StoredCredential, CliError> {
     let value = serde_json::from_str(text.expose_secret()).map_err(|_| {
-        CliError::auth_config(format!(
-            "the stored credentials for profile {profile} are not valid JSON; log in again \
-             with `cad-cli use profile {profile} --login`"
-        ))
+        CliError::auth_config_with_hint(
+            format!("the stored credentials for profile {profile} are not valid JSON"),
+            format!("log in again with `cad-cli use profile {profile} --login`"),
+        )
     })?;
     StoredCredential::from_value(profile, value)
 }

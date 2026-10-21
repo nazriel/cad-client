@@ -58,12 +58,13 @@ where
     .then(|| BackgroundCheck::start(&environment))
     .flatten();
 
+    let output = cli.global.output;
     let store = CredentialStore::from_environment(&environment);
     let profiles = ProfileStore::from_environment(&environment);
     let code = match execute(cli, &matches, &environment, &store, &profiles, &terminal).await {
         Ok(status) => ExitCode::from(status),
         Err(error) => {
-            let _ = terminal.status(StatusKind::Error, &error.to_string());
+            report_error(&terminal, &error, output);
             error.exit_code()
         }
     };
@@ -74,6 +75,17 @@ where
         let _ = terminal.status(StatusKind::Info, &message);
     }
     code
+}
+
+/// Tells the caller why the command failed: a status line for a person, one
+/// JSON object for a program.
+fn report_error(terminal: &dyn Terminal, error: &CliError, output: OutputFormat) {
+    let _ = match output {
+        OutputFormat::Table => terminal.status(StatusKind::Error, &error.to_string()),
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            crate::output::write_error(error, &mut std::io::stderr().lock())
+        }
+    };
 }
 
 /// Runs the parsed command and returns the process exit status.

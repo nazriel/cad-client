@@ -59,18 +59,23 @@ impl FileBackend {
         file.read_to_string(&mut text)
             .map_err(|error| self.unreadable(&error))?;
         let document: Document = serde_json::from_str(&text).map_err(|error| {
-            CliError::auth_config(format!(
-                "{} is not a credentials file ({error}); fix or remove it",
-                self.path.display()
-            ))
+            CliError::auth_config_with_hint(
+                format!(
+                    "{} is not a credentials file ({error})",
+                    self.path.display()
+                ),
+                "fix or remove it",
+            )
         })?;
         if document.version != VERSION {
-            return Err(CliError::auth_config(format!(
-                "{} is version {}, which this version of cad-cli does not read; update \
-                 cad-cli or remove the file",
-                self.path.display(),
-                document.version
-            )));
+            return Err(CliError::auth_config_with_hint(
+                format!(
+                    "{} is version {}, which this version of cad-cli does not read",
+                    self.path.display(),
+                    document.version
+                ),
+                "update cad-cli or remove the file",
+            ));
         }
         Ok(Some(document))
     }
@@ -93,12 +98,13 @@ impl FileBackend {
         if mode.trailing_zeros() >= 6 {
             return Ok(());
         }
-        Err(CliError::auth_config(format!(
-            "{} holds credentials but can be read by other users (mode {mode:03o}); run \
-             `chmod 600 {}`",
-            self.path.display(),
-            self.path.display()
-        )))
+        Err(CliError::auth_config_with_hint(
+            format!(
+                "{} holds credentials but can be read by other users (mode {mode:03o})",
+                self.path.display()
+            ),
+            format!("run `chmod 600 {}`", self.path.display()),
+        ))
     }
 
     #[cfg(not(unix))]

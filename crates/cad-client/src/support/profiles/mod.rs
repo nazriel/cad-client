@@ -288,18 +288,20 @@ impl ProfileStore {
             }
         };
         let set: ProfileSet = serde_json::from_str(&text).map_err(|error| {
-            CliError::config(format!(
-                "{} is not a profiles file ({error}); fix or remove it",
-                path.display()
-            ))
+            CliError::config_with_hint(
+                format!("{} is not a profiles file ({error})", path.display()),
+                "fix or remove it",
+            )
         })?;
         if set.version != VERSION {
-            return Err(CliError::config(format!(
-                "{} is version {}, which this version of cad-cli does not read; update cad-cli \
-                 or remove the file",
-                path.display(),
-                set.version
-            )));
+            return Err(CliError::config_with_hint(
+                format!(
+                    "{} is version {}, which this version of cad-cli does not read",
+                    path.display(),
+                    set.version
+                ),
+                "update cad-cli or remove the file",
+            ));
         }
         Ok(set)
     }

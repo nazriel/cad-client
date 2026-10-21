@@ -144,8 +144,9 @@ pub(super) async fn run(
     }
     let set = profiles.load()?;
     let Some(selected) = select_profile(global, environment, &set)? else {
-        return Err(CliError::config(
-            "`cad-cli use company` needs a profile; create one with `cad-cli use profile <name>`",
+        return Err(CliError::config_with_hint(
+            "`cad-cli use company` needs a profile",
+            "create one with `cad-cli use profile <name>`",
         ));
     };
     let name = selected.name;

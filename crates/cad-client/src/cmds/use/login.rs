@@ -204,11 +204,14 @@ fn save(
             Err(StoreError::Failed(error)) => return Err(error),
             Err(StoreError::Unavailable(reason)) => {
                 let path = store.file_path().ok_or_else(|| {
-                    CliError::auth_config(format!(
-                        "cannot use the system keyring: {reason}; and this platform has no \
-                         per-user configuration directory to keep a file in. Nothing was stored; \
-                         set CAD_API_KEY and CAD_API_SECRET instead"
-                    ))
+                    CliError::auth_config_with_hint(
+                        format!(
+                            "cannot use the system keyring: {reason}; and this platform has no \
+                             per-user configuration directory to keep a file in. Nothing was \
+                             stored"
+                        ),
+                        "set CAD_API_KEY and CAD_API_SECRET instead",
+                    )
                 })?;
                 if !terminal.is_interactive() {
                     return Err(CliError::auth_config(format!(
@@ -227,8 +230,9 @@ fn save(
                     path.display()
                 );
                 if !terminal.ask(&question)? {
-                    return Err(CliError::auth_config(
-                        "nothing was stored; set CAD_API_KEY and CAD_API_SECRET instead",
+                    return Err(CliError::auth_config_with_hint(
+                        "nothing was stored",
+                        "set CAD_API_KEY and CAD_API_SECRET instead",
                     ));
                 }
             }

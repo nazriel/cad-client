@@ -844,7 +844,7 @@ async fn a_keyring_that_fails_exits_two_and_names_the_way_out_without_a_terminal
             .profile("local", &more, &terminal, &Env::default())
             .await
             .unwrap_err();
-        assert!(matches!(error, CliError::AuthConfig(_)));
+        assert!(matches!(error, CliError::AuthConfig { .. }));
         assert_eq!(exit_code(&error), ExitCode::from(2));
         let message = error.to_string();
         assert!(message.contains(KEYRING_DOWN), "{message}");

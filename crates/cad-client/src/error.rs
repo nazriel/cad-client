@@ -1,6 +1,9 @@
 use std::process::ExitCode;
 
+use std::borrow::Cow;
+
 use serde_json::Value;
+use strum::EnumDiscriminants;
 use thiserror::Error;
 
 /// Failure surfaced by the CLI.
@@ -13,16 +16,27 @@ use thiserror::Error;
 /// converted from. The rendered message is unchanged, but `details` from a
 /// rejected API call and the whole source chain below it stay reachable through
 /// [`CliError::api_error`] instead of being flattened away at the boundary.
-#[derive(Debug, Error)]
+///
+/// `Config` and `AuthConfig` can carry a `hint`: how to fix the failure, kept
+/// apart from what went wrong so a program can show or act on either. The text
+/// rendering joins them as `<message>; <hint>`.
+#[derive(Debug, Error, EnumDiscriminants)]
+#[strum_discriminants(name(ErrorKind), derive(serde::Serialize))]
+#[strum_discriminants(serde(rename_all = "camelCase"))]
+#[strum_discriminants(doc = "What kind of failure a [`CliError`] is, as named in its JSON form.")]
 pub enum CliError {
-    #[error("configuration error: {message}")]
+    #[error("configuration error: {}", Hinted(message, hint))]
     Config {
         message: String,
+        hint: Option<String>,
         #[source]
         source: Option<cad_api::Error>,
     },
-    #[error("authentication configuration error: {0}")]
-    AuthConfig(String),
+    #[error("authentication configuration error: {}", Hinted(message, hint))]
+    AuthConfig {
+        message: String,
+        hint: Option<String>,
+    },
     #[error("authentication failed: {message}")]
     Authentication {
         message: String,
@@ -55,16 +69,90 @@ pub enum CliError {
     Update(String),
 }
 
+/// A message with the hint that says how to fix it, as one line of text.
+struct Hinted<'a>(&'a str, &'a Option<String>);
+
+impl std::fmt::Display for Hinted<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.1 {
+            Some(hint) => write!(f, "{}; {hint}", self.0),
+            None => f.write_str(self.0),
+        }
+    }
+}
+
 impl CliError {
     pub fn config(message: impl Into<String>) -> Self {
         Self::Config {
             message: message.into(),
+            hint: None,
+            source: None,
+        }
+    }
+
+    /// A configuration failure that says how to fix it.
+    pub fn config_with_hint(message: impl Into<String>, hint: impl Into<String>) -> Self {
+        Self::Config {
+            message: message.into(),
+            hint: Some(hint.into()),
             source: None,
         }
     }
 
     pub fn auth_config(message: impl Into<String>) -> Self {
-        Self::AuthConfig(message.into())
+        Self::AuthConfig {
+            message: message.into(),
+            hint: None,
+        }
+    }
+
+    /// A credentials failure that says how to fix it.
+    pub fn auth_config_with_hint(message: impl Into<String>, hint: impl Into<String>) -> Self {
+        Self::AuthConfig {
+            message: message.into(),
+            hint: Some(hint.into()),
+        }
+    }
+
+    #[must_use]
+    pub fn kind(&self) -> ErrorKind {
+        ErrorKind::from(self)
+    }
+
+    /// What went wrong, without the kind's prefix and without the hint.
+    #[must_use]
+    pub fn message(&self) -> Cow<'_, str> {
+        match self {
+            Self::Config { message, .. }
+            | Self::AuthConfig { message, .. }
+            | Self::Authentication { message, .. }
+            | Self::Api { message, .. }
+            | Self::Transport { message, .. } => Cow::Borrowed(message),
+            Self::Input(message) | Self::Timeout(message) | Self::Update(message) => {
+                Cow::Borrowed(message)
+            }
+            Self::Io(error) => Cow::Owned(error.to_string()),
+            Self::Cancelled => Cow::Borrowed("operation cancelled"),
+        }
+    }
+
+    /// How to fix the failure, when the error says so.
+    #[must_use]
+    pub fn hint(&self) -> Option<&str> {
+        match self {
+            Self::Config { hint, .. } | Self::AuthConfig { hint, .. } => hint.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// The HTTP status the platform answered with, when the failure carries one.
+    #[must_use]
+    pub fn status(&self) -> Option<u16> {
+        match self.api_error() {
+            Some(cad_api::Error::Api { status, .. }) => Some(*status),
+            Some(cad_api::Error::Authentication { status, .. }) => *status,
+            _ => None,
+        }
     }
 
     /// Reports a failure the CLI itself diagnosed from an API result, such as a
@@ -91,7 +179,7 @@ impl CliError {
             | Self::Authentication { source, .. }
             | Self::Api { source, .. }
             | Self::Transport { source, .. } => source.as_ref(),
-            Self::AuthConfig(_)
+            Self::AuthConfig { .. }
             | Self::Input(_)
             | Self::Io(_)
             | Self::Timeout(_)
@@ -112,14 +200,20 @@ impl CliError {
 
     #[must_use]
     pub fn exit_code(&self) -> ExitCode {
+        ExitCode::from(self.exit_status())
+    }
+
+    /// The number [`CliError::exit_code`] makes the process exit with.
+    #[must_use]
+    pub fn exit_status(&self) -> u8 {
         match self {
-            Self::Config { .. } | Self::AuthConfig(_) | Self::Input(_) => ExitCode::from(2),
-            Self::Authentication { .. } => ExitCode::from(3),
+            Self::Config { .. } | Self::AuthConfig { .. } | Self::Input(_) => 2,
+            Self::Authentication { .. } => 3,
             // A release that cannot be installed is a remote service
             // returning something unusable, like a failed API operation.
-            Self::Api { .. } | Self::Timeout(_) | Self::Update(_) => ExitCode::from(4),
-            Self::Transport { .. } | Self::Io(_) => ExitCode::from(5),
-            Self::Cancelled => ExitCode::from(130),
+            Self::Api { .. } | Self::Timeout(_) | Self::Update(_) => 4,
+            Self::Transport { .. } | Self::Io(_) => 5,
+            Self::Cancelled => 130,
         }
     }
 }
@@ -134,6 +228,7 @@ impl From<cad_api::Error> for CliError {
                 let message = message.clone();
                 Self::Config {
                     message,
+                    hint: None,
                     source: Some(error),
                 }
             }
@@ -180,7 +275,7 @@ impl From<cad_api::Error> for CliError {
 
 #[cfg(test)]
 mod tests {
-    use super::CliError;
+    use super::{CliError, ErrorKind};
 
     #[test]
     fn api_failures_keep_their_details_and_source() {
@@ -211,5 +306,147 @@ mod tests {
         assert!(error.api_error().is_none());
         assert!(error.details().is_none());
         assert!(std::error::Error::source(&error).is_none());
+    }
+
+    #[test]
+    fn a_hint_is_joined_to_its_message_only_in_the_text() {
+        let error = CliError::config_with_hint("no profile is selected", "pass --profile");
+        assert_eq!(
+            error.to_string(),
+            "configuration error: no profile is selected; pass --profile"
+        );
+        assert_eq!(error.message(), "no profile is selected");
+        assert_eq!(error.hint(), Some("pass --profile"));
+
+        let error = CliError::auth_config_with_hint("no credentials", "log in");
+        assert_eq!(
+            error.to_string(),
+            "authentication configuration error: no credentials; log in"
+        );
+        assert_eq!(error.message(), "no credentials");
+        assert_eq!(error.hint(), Some("log in"));
+
+        let error = CliError::auth_config("CAD_API_KEY is not set");
+        assert_eq!(
+            error.to_string(),
+            "authentication configuration error: CAD_API_KEY is not set"
+        );
+        assert_eq!(error.hint(), None);
+    }
+
+    #[test]
+    fn every_variant_has_its_kind_message_and_exit_status() {
+        let api = || {
+            Some(cad_api::Error::Api {
+                status: 500,
+                message: "boom".to_owned(),
+                details: None,
+            })
+        };
+        let cases = [
+            (CliError::config("a"), ErrorKind::Config, "a", 2),
+            (CliError::auth_config("a"), ErrorKind::AuthConfig, "a", 2),
+            (
+                CliError::Authentication {
+                    message: "a".to_owned(),
+                    source: None,
+                },
+                ErrorKind::Authentication,
+                "a",
+                3,
+            ),
+            (CliError::Input("a".to_owned()), ErrorKind::Input, "a", 2),
+            (
+                CliError::Api {
+                    message: "a".to_owned(),
+                    source: api(),
+                },
+                ErrorKind::Api,
+                "a",
+                4,
+            ),
+            (CliError::transport("a"), ErrorKind::Transport, "a", 5),
+            (
+                CliError::Io(std::io::Error::other("a")),
+                ErrorKind::Io,
+                "a",
+                5,
+            ),
+            (
+                CliError::Timeout("a".to_owned()),
+                ErrorKind::Timeout,
+                "a",
+                4,
+            ),
+            (
+                CliError::Cancelled,
+                ErrorKind::Cancelled,
+                "operation cancelled",
+                130,
+            ),
+            (CliError::Update("a".to_owned()), ErrorKind::Update, "a", 4),
+        ];
+        for (error, kind, message, status) in cases {
+            assert_eq!(error.kind(), kind, "{error}");
+            assert_eq!(error.message(), message, "{error}");
+            assert_eq!(error.exit_status(), status, "{error}");
+        }
+    }
+
+    #[test]
+    fn the_kinds_are_named_in_camel_case() {
+        let names: Vec<_> = [
+            ErrorKind::Config,
+            ErrorKind::AuthConfig,
+            ErrorKind::Authentication,
+            ErrorKind::Input,
+            ErrorKind::Api,
+            ErrorKind::Transport,
+            ErrorKind::Io,
+            ErrorKind::Timeout,
+            ErrorKind::Cancelled,
+            ErrorKind::Update,
+        ]
+        .into_iter()
+        .map(|kind| serde_json::to_value(kind).expect("a kind serializes"))
+        .collect();
+        assert_eq!(
+            names,
+            [
+                "config",
+                "authConfig",
+                "authentication",
+                "input",
+                "api",
+                "transport",
+                "io",
+                "timeout",
+                "cancelled",
+                "update"
+            ]
+            .map(serde_json::Value::from)
+        );
+    }
+
+    #[test]
+    fn the_status_comes_from_the_sdk_error() {
+        assert_eq!(
+            CliError::from(cad_api::Error::Api {
+                status: 403,
+                message: "no".to_owned(),
+                details: None,
+            })
+            .status(),
+            Some(403)
+        );
+        assert_eq!(
+            CliError::from(cad_api::Error::Authentication {
+                status: Some(401),
+                message: "no".to_owned(),
+            })
+            .status(),
+            Some(401)
+        );
+        assert_eq!(CliError::config("a").status(), None);
     }
 }

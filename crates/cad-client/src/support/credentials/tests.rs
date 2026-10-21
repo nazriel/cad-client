@@ -131,7 +131,7 @@ fn an_entry_of_an_unknown_kind_names_the_kind_and_the_origin() {
         json!({"kind": "oauth", "accessToken": "never-shown", "refreshToken": "never-shown"}),
     )
     .unwrap_err();
-    assert!(matches!(error, CliError::AuthConfig(_)));
+    assert!(matches!(error, CliError::AuthConfig { .. }));
     let message = error.to_string();
     assert!(message.contains("oauth"), "{message}");
     assert!(message.contains(PROFILE), "{message}");
@@ -152,7 +152,7 @@ fn an_entry_without_a_kind_or_with_missing_fields_is_an_error_not_a_skip() {
         json!("a string"),
     ] {
         let error = StoredCredential::from_value(&profile(), value.clone()).unwrap_err();
-        assert!(matches!(error, CliError::AuthConfig(_)), "{value}");
+        assert!(matches!(error, CliError::AuthConfig { .. }), "{value}");
         assert!(error.to_string().contains(PROFILE), "{value}");
     }
 }
@@ -357,7 +357,7 @@ fn without_a_configuration_directory_the_file_cannot_be_written() {
     let error = store
         .save_in_file(&profile(), &credential(KEY_ID, SECRET))
         .unwrap_err();
-    assert!(matches!(error, CliError::AuthConfig(_)));
+    assert!(matches!(error, CliError::AuthConfig { .. }));
     assert!(store.file_path().is_none());
     assert!(store.load(&profile()).unwrap().credential.is_none());
 }
@@ -480,7 +480,7 @@ fn a_file_with_any_group_or_other_bit_is_refused_with_the_fix() {
         let path = fixture.path.display().to_string();
         let expected = format!("{mode:03o}");
         let loaded = fixture.store.load(&profile()).unwrap_err();
-        assert!(matches!(loaded, CliError::AuthConfig(_)), "{mode:o}");
+        assert!(matches!(loaded, CliError::AuthConfig { .. }), "{mode:o}");
         let message = loaded.to_string();
         assert!(message.contains(&path), "{message}");
         assert!(message.contains(&expected), "{message}");
@@ -513,7 +513,7 @@ fn a_file_that_is_not_ours_or_is_newer_is_an_error_not_overwritten() {
     for content in ["not json", "[]", r#"{"version":2,"credentials":{}}"#] {
         std::fs::write(&fixture.path, content).unwrap();
         let error = fixture.store.load(&profile()).unwrap_err();
-        assert!(matches!(error, CliError::AuthConfig(_)), "{content}");
+        assert!(matches!(error, CliError::AuthConfig { .. }), "{content}");
         assert!(
             error
                 .to_string()
@@ -627,7 +627,9 @@ fn half_an_environment_login_decides_alone_and_is_an_error() {
 
     let only_secret = Env::default().with("CAD_API_SECRET", "s");
     let error = resolve(&only_secret, &fixture.store, Some(&profile()), ORIGIN).unwrap_err();
-    assert!(matches!(&error, CliError::AuthConfig(m) if m == "CAD_API_KEY is not set"));
+    assert!(
+        matches!(&error, CliError::AuthConfig { message, hint: None } if message == "CAD_API_KEY is not set")
+    );
 
     let not_a_uuid = Env::default().with("CAD_API_KEY", "nope");
     let error = resolve(&not_a_uuid, &fixture.store, Some(&profile()), ORIGIN).unwrap_err();
@@ -645,7 +647,7 @@ fn half_an_environment_login_decides_alone_and_is_an_error() {
         assert_eq!(resolved.key_id(), KEY_ID);
         let error = resolved.into_credentials().unwrap_err();
         assert!(
-            matches!(&error, CliError::AuthConfig(m) if m == "CAD_API_SECRET is not set or empty")
+            matches!(&error, CliError::AuthConfig { message, hint: None } if message == "CAD_API_SECRET is not set or empty")
         );
     }
 }
@@ -679,7 +681,7 @@ fn another_profile_has_no_login_and_the_error_says_how_to_get_one() {
         OTHER_ORIGIN,
     )
     .unwrap_err();
-    assert!(matches!(error, CliError::AuthConfig(_)));
+    assert!(matches!(error, CliError::AuthConfig { .. }));
     assert_eq!(
         error.to_string(),
         "authentication configuration error: profile production has no login; run `cad-cli use \
@@ -701,7 +703,7 @@ fn without_a_profile_only_the_environment_can_supply_credentials() {
         .put(PROFILE, &credential(KEY_ID, SECRET).to_value().to_string());
 
     let error = resolve(&Env::default(), &fixture.store, None, ORIGIN).unwrap_err();
-    assert!(matches!(error, CliError::AuthConfig(_)));
+    assert!(matches!(error, CliError::AuthConfig { .. }));
     assert_eq!(
         error.to_string(),
         format!(
@@ -741,7 +743,7 @@ fn an_entry_made_for_another_origin_is_never_used_whatever_its_profile_is_called
             fixture.store.save_in_keyring(&profile(), &foreign).unwrap();
         }
         let error = resolve(&Env::default(), &fixture.store, Some(&profile()), ORIGIN).unwrap_err();
-        assert!(matches!(error, CliError::AuthConfig(_)));
+        assert!(matches!(error, CliError::AuthConfig { .. }));
         let message = error.to_string();
         assert_eq!(
             message,
@@ -811,7 +813,7 @@ fn a_stored_entry_of_an_unknown_kind_stops_resolution() {
 
     fixture.keyring.put(PROFILE, "{not json");
     let error = resolve(&Env::default(), &fixture.store, Some(&profile()), ORIGIN).unwrap_err();
-    assert!(matches!(error, CliError::AuthConfig(_)));
+    assert!(matches!(error, CliError::AuthConfig { .. }));
 }
 
 #[test]

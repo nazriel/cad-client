@@ -87,19 +87,24 @@ pub(crate) fn resolve(
         return from_environment(environment);
     }
     let Some(profile) = profile else {
-        return Err(CliError::auth_config(format!(
-            "no credentials for {origin}; set CAD_API_KEY and CAD_API_SECRET, or create a \
-             profile with `cad-cli use profile <name> --url {origin}`"
-        )));
+        return Err(CliError::auth_config_with_hint(
+            format!("no credentials for {origin}"),
+            format!(
+                "set CAD_API_KEY and CAD_API_SECRET, or create a profile with `cad-cli use \
+                 profile <name> --url {origin}`"
+            ),
+        ));
     };
     let loaded = store.load(profile)?;
     if let Some((credential, location)) = loaded.credential {
         if credential.origin() != origin {
-            return Err(CliError::auth_config(format!(
-                "the login stored for profile {profile} is for {}, not {origin}; log in again \
-                 with `cad-cli use profile {profile} --login`",
-                credential.origin()
-            )));
+            return Err(CliError::auth_config_with_hint(
+                format!(
+                    "the login stored for profile {profile} is for {}, not {origin}",
+                    credential.origin()
+                ),
+                format!("log in again with `cad-cli use profile {profile} --login`"),
+            ));
         }
         let key_id = credential.key_id();
         let StoredCredential::ApiKey { secret, .. } = credential;
@@ -113,14 +118,16 @@ pub(crate) fn resolve(
             source,
         });
     }
-    let mut message = format!(
-        "profile {profile} has no login; run `cad-cli use profile {profile} --login`, or set \
-         CAD_API_KEY and CAD_API_SECRET"
+    let mut hint = format!(
+        "run `cad-cli use profile {profile} --login`, or set CAD_API_KEY and CAD_API_SECRET"
     );
     if let Some(reason) = loaded.keyring_failure {
-        let _ = write!(message, " (the system keyring could not be read: {reason})");
+        let _ = write!(hint, " (the system keyring could not be read: {reason})");
     }
-    Err(CliError::auth_config(message))
+    Err(CliError::auth_config_with_hint(
+        format!("profile {profile} has no login"),
+        hint,
+    ))
 }
 
 fn from_environment(environment: &impl Environment) -> Result<Resolved, CliError> {

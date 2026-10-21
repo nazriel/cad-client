@@ -1282,3 +1282,104 @@ fn a_company_scoped_command_without_a_profile_names_the_flag_and_the_variable() 
             "no company is selected; pass --company-id or set CAD_COMPANY_ID",
         ));
 }
+
+/// Parses stderr that must be exactly one JSON line, and returns it.
+fn error_line(stderr: &[u8]) -> serde_json::Value {
+    let text = String::from_utf8_lossy(stderr);
+    assert_eq!(text.lines().count(), 1, "one line on stderr: {text}");
+    assert!(text.ends_with('\n'), "{text:?}");
+    serde_json::from_str(&text).unwrap_or_else(|error| panic!("{error}: {text}"))
+}
+
+#[test]
+fn a_json_error_is_one_object_on_stderr_and_stdout_stays_empty() {
+    for format in ["json", "jsonl"] {
+        let output = cad_cli()
+            .args(["--output", format, "company", "list"])
+            .assert()
+            .code(2)
+            .stdout(predicate::str::is_empty())
+            .get_output()
+            .clone();
+        let error = error_line(&output.stderr);
+        let error = &error["error"];
+        assert_eq!(error["kind"], "config", "{format}");
+        assert_eq!(error["message"], "no profile is selected", "{format}");
+        assert!(
+            error["hint"]
+                .as_str()
+                .is_some_and(|hint| hint.contains("cad-cli use profile <name>")),
+            "{format}: {error}"
+        );
+        assert_eq!(error["exitCode"], 2, "{format}");
+        assert_eq!(error["status"], serde_json::Value::Null, "{format}");
+        assert_eq!(error["details"], serde_json::Value::Null, "{format}");
+    }
+}
+
+#[test]
+fn a_table_error_stays_the_text_line() {
+    cad_cli()
+        .args(["--output", "table", "company", "list"])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::starts_with(
+            "configuration error: no profile is selected; run `cad-cli use profile <name>`",
+        ))
+        .stderr(predicate::str::contains("{").not());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_rejected_request_reports_its_status_and_body_as_json() {
+    let server = MockServer::start().await;
+    mock_identity(
+        &server,
+        ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "principal": {"userId": USER_ID, "affiliatedCompanyId": COMPANY_ID},
+            "companySelection": {"resolvedCompanyId": COMPANY_ID, "source": "HEADER"}
+        })),
+    )
+    .await;
+    Mock::given(method("GET"))
+        .and(path(REPORTING_PERIODS_PATH))
+        .respond_with(
+            ResponseTemplate::new(403)
+                .set_body_json(serde_json::json!({"msg": "not your company"})),
+        )
+        .mount(&server)
+        .await;
+
+    let mut command = with_credentials();
+    command.env("CAD_COMPANY_ID", COMPANY_ID.to_string()).args([
+        "--server-url",
+        &server.uri(),
+        "--allow-insecure-http",
+        "--output",
+        "jsonl",
+        "reporting-period",
+        "list",
+    ]);
+    let output = run(command)
+        .await
+        .code(4)
+        .stdout(predicate::str::is_empty())
+        .get_output()
+        .clone();
+    let error = error_line(&output.stderr);
+    let error = &error["error"];
+    assert_eq!(error["kind"], "api");
+    assert_eq!(error["status"], 403);
+    assert_eq!(error["exitCode"], 4);
+    assert_eq!(error["hint"], serde_json::Value::Null);
+    assert_eq!(
+        error["details"],
+        serde_json::json!({"msg": "not your company"})
+    );
+    assert!(
+        error["message"]
+            .as_str()
+            .is_some_and(|message| message.starts_with("HTTP 403")),
+        "{error}"
+    );
+}

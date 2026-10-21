@@ -1295,7 +1295,7 @@ async fn missing_credentials_fail_before_any_request() {
     .await
     .expect_err("missing credentials must fail");
 
-    assert!(matches!(error, CliError::AuthConfig(_)));
+    assert!(matches!(error, CliError::AuthConfig { .. }));
     assert!(
         error
             .to_string()
@@ -1618,7 +1618,7 @@ async fn a_foreign_server_never_receives_the_active_profiles_key() {
     )
     .await
     .expect_err("no stored login may be used for a server that is not the profile's");
-    assert!(matches!(error, CliError::AuthConfig(_)), "{error}");
+    assert!(matches!(error, CliError::AuthConfig { .. }), "{error}");
     assert!(
         error.to_string().contains(&format!(
             "no credentials for {}; set CAD_API_KEY and CAD_API_SECRET, or create a profile \
@@ -1679,7 +1679,7 @@ async fn a_profile_without_a_login_fails_before_a_request_naming_the_way_out() {
     .await
     .expect_err("no credentials anywhere");
 
-    assert!(matches!(error, CliError::AuthConfig(_)));
+    assert!(matches!(error, CliError::AuthConfig { .. }));
     assert_eq!(error.exit_code(), std::process::ExitCode::from(2));
     assert_eq!(
         error.to_string(),

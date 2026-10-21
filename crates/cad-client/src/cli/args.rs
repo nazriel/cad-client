@@ -36,7 +36,8 @@ pub struct GlobalArgs {
     #[arg(long, value_parser = parse_duration, default_value = "60s", global = true)]
     pub request_timeout: Duration,
 
-    /// Select human-readable or machine-readable output.
+    /// Select human-readable or machine-readable output. With json or jsonl a failure is
+    /// one JSON object on stderr; usage errors from the argument parser stay text.
     #[arg(long, value_enum, default_value_t = OutputFormat::Table, global = true)]
     pub output: OutputFormat,
 

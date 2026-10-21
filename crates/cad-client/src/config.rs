@@ -215,11 +215,14 @@ impl fmt::Debug for AppConfig {
 /// The error for a command that acts on a company when none is selected.
 pub(crate) fn missing_company(profile: Option<&ProfileName>) -> CliError {
     match profile {
-        Some(profile) => CliError::config(format!(
-            "no company is selected for profile {profile}; run `cad-cli use company <name|id>`, \
-             or pass --company-id or set CAD_COMPANY_ID"
-        )),
-        None => CliError::config("no company is selected; pass --company-id or set CAD_COMPANY_ID"),
+        Some(profile) => CliError::config_with_hint(
+            format!("no company is selected for profile {profile}"),
+            "run `cad-cli use company <name|id>`, or pass --company-id or set CAD_COMPANY_ID",
+        ),
+        None => CliError::config_with_hint(
+            "no company is selected",
+            "pass --company-id or set CAD_COMPANY_ID",
+        ),
     }
 }
 
@@ -346,18 +349,19 @@ pub(crate) fn select_profile(
         (Some(first), Some(second)) => {
             let mut names = vec![first.to_string(), second.to_string()];
             names.extend(matching.map(ToString::to_string));
-            Err(CliError::config(format!(
-                "several profiles use {origin} ({}); pass --profile",
-                names.join(", ")
-            )))
+            Err(CliError::config_with_hint(
+                format!("several profiles use {origin} ({})", names.join(", ")),
+                "pass --profile",
+            ))
         }
     }
 }
 
 fn missing_profile(name: &ProfileName) -> CliError {
-    CliError::config(format!(
-        "there is no profile {name}; create it with `cad-cli use profile {name}`"
-    ))
+    CliError::config_with_hint(
+        format!("there is no profile {name}"),
+        format!("create it with `cad-cli use profile {name}`"),
+    )
 }
 
 /// Applies the documented precedence for the server and the profile: see
@@ -395,10 +399,10 @@ pub(crate) fn select(
 }
 
 fn no_profile() -> CliError {
-    CliError::config(
-        "no profile is selected; run `cad-cli use profile <name>` (production, staging, dev, \
-         or a name of your own), pass --profile, or set CAD_SERVER_URL with CAD_API_KEY and \
-         CAD_API_SECRET",
+    CliError::config_with_hint(
+        "no profile is selected",
+        "run `cad-cli use profile <name>` (production, staging, dev, or a name of your own), \
+         pass --profile, or set CAD_SERVER_URL with CAD_API_KEY and CAD_API_SECRET",
     )
 }
 
@@ -917,7 +921,7 @@ mod tests {
         let global = parse(&[]).global;
 
         let error = AppConfig::resolve(&global, &Env::default(), &store, &set).unwrap_err();
-        assert!(matches!(error, CliError::AuthConfig(_)), "{error}");
+        assert!(matches!(error, CliError::AuthConfig { .. }), "{error}");
         assert!(
             error.to_string().contains(&format!(
                 "the login stored for profile staging is for {PRODUCTION}, not {STAGING}"
