@@ -155,7 +155,7 @@ same in the terminal.
 | [`custom-option`](docs/cli/custom-option.md) | Manage options belonging to custom fields |
 | [`report`](docs/cli/report.md) | Create and inspect generated reports |
 | [`schema`](docs/cli/schema.md) | Print a machine-readable schema for a CLI resource |
-| [`completions`](docs/cli/completions.md) | Print a shell completion script |
+| [`completions`](docs/cli/completions.md) | Print a shell completion script that also completes IDs from the platform |
 | [`man`](docs/cli/man.md) | Print the manual page in roff format |
 | [`update`](docs/cli/update.md) | Update cad-cli to the latest release |
 <!-- cli-commands:end -->

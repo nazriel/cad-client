@@ -55,7 +55,7 @@ cad-cli reporting-period get [OPTIONS] <ID>
 
 | Argument | Description |
 |---|---|
-| `<ID>` | Identifier of the resource. |
+| `<ID>` | Identifier of the reporting period. |
 
 ### Examples
 
@@ -77,7 +77,7 @@ cad-cli reporting-period details [OPTIONS] <ID>
 
 | Argument | Description |
 |---|---|
-| `<ID>` | Identifier of the resource. |
+| `<ID>` | Identifier of the reporting period. |
 
 ### Examples
 
@@ -121,7 +121,7 @@ cad-cli reporting-period update [OPTIONS] --input <INPUT> <ID>
 
 | Argument | Description |
 |---|---|
-| `<ID>` | Identifier of the resource. |
+| `<ID>` | Identifier of the reporting period. |
 
 ### Options
 
@@ -149,7 +149,7 @@ cad-cli reporting-period delete [OPTIONS] <ID>
 
 | Argument | Description |
 |---|---|
-| `<ID>` | Identifier of the resource. |
+| `<ID>` | Identifier of the reporting period. |
 
 ### Examples
 
