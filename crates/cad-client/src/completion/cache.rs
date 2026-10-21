@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::config::Environment;
+use crate::support::cache_dir::app_cache_dir;
 
 /// How long a fetched list answers without asking the platform again.
 pub(crate) const TTL: Duration = Duration::from_hours(1);
@@ -119,29 +120,11 @@ impl Cache {
         Self { dir }
     }
 
-    /// The per-user cache directory, or `None` when the platform defines none.
-    ///
-    /// `XDG_CACHE_HOME` wins on every platform when it is absolute, so the cache
-    /// can be relocated (or isolated in tests) the conventional way. Otherwise
-    /// the platform default is used: `~/Library/Caches` on macOS,
-    /// `%LOCALAPPDATA%` on Windows and `~/.cache` elsewhere.
+    /// `completions/` in the user cache directory (see
+    /// [`app_cache_dir`]), or `None` when the platform defines none.
     pub(crate) fn from_environment(environment: &impl Environment) -> Option<Self> {
-        let absolute = |name: &str| {
-            environment
-                .get(name)
-                .map(PathBuf::from)
-                .filter(|path| path.is_absolute())
-        };
-        let root = absolute("XDG_CACHE_HOME").or_else(|| {
-            if cfg!(windows) {
-                absolute("LOCALAPPDATA")
-            } else if cfg!(target_os = "macos") {
-                absolute("HOME").map(|home| home.join("Library").join("Caches"))
-            } else {
-                absolute("HOME").map(|home| home.join(".cache"))
-            }
-        })?;
-        Some(Self::at(root.join("cad-cli").join("completions")))
+        app_cache_dir(environment, std::env::consts::OS)
+            .map(|dir| Self::at(dir.join("completions")))
     }
 
     fn path(&self, key: &CacheKey) -> PathBuf {

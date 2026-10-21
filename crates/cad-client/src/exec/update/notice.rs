@@ -19,6 +19,7 @@ use tokio::task::JoinHandle;
 use super::{ReleaseSource, available_message, current_version};
 use crate::cli::OutputFormat;
 use crate::config::Environment;
+use crate::support::cache_dir::app_cache_dir;
 
 /// Turns the notice off when set to a true value (see [`is_true`]).
 pub(crate) const DISABLE_VARIABLE: &str = "CAD_CLI_NO_UPDATE_CHECK";
@@ -28,8 +29,7 @@ pub(crate) const CHECK_INTERVAL: Duration = Duration::from_hours(24);
 pub(crate) const RETRY_INTERVAL: Duration = Duration::from_hours(1);
 /// Budget for the background request; a slower answer is not worth waiting for.
 const CHECK_TIMEOUT: Duration = Duration::from_secs(3);
-/// Directory under the user cache directory, and the state file inside it.
-const CACHE_DIR: &str = "cad-cli";
+/// The state file inside the user cache directory.
 const STATE_FILE: &str = "update-check.json";
 
 /// Whether the environment and invocation allow a background check at all.
@@ -105,24 +105,9 @@ pub(crate) struct State {
     pub(crate) latest: Option<String>,
 }
 
-/// `<cache dir>/cad-cli/update-check.json`, where the cache directory is
-/// `%LOCALAPPDATA%` on Windows, `~/Library/Caches` on macOS and
-/// `$XDG_CACHE_HOME` (default `~/.cache`) elsewhere.
+/// `update-check.json` in the user cache directory (see [`app_cache_dir`]).
 pub(crate) fn state_path(environment: &impl Environment, os: &str) -> Option<PathBuf> {
-    let absolute = |key| {
-        environment
-            .get(key)
-            .map(PathBuf::from)
-            .filter(|path| path.is_absolute())
-    };
-    let cache = match os {
-        "windows" => absolute("LOCALAPPDATA"),
-        "macos" => absolute("HOME").map(|home| home.join("Library").join("Caches")),
-        _ => {
-            absolute("XDG_CACHE_HOME").or_else(|| absolute("HOME").map(|home| home.join(".cache")))
-        }
-    }?;
-    Some(cache.join(CACHE_DIR).join(STATE_FILE))
+    app_cache_dir(environment, os).map(|dir| dir.join(STATE_FILE))
 }
 
 /// Whether a network check is due at `now`: not while the last answer is
