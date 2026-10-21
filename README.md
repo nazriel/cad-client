@@ -36,6 +36,11 @@ and builds the release archives. Pushing a tag `v<version>` that matches the
 workspace version publishes a GitHub release with archives for Linux (musl),
 macOS and Windows on x86_64 and aarch64, plus `SHA256SUMS`.
 
+`cad-cli --version` prints `cad-cli <version>`. Archives CI builds from
+anything but a release tag name their commit, for example
+`cad-cli 0.1.0-dev+0123456789ab`: the build reads it from
+`CAD_CLI_BUILD_COMMIT`, which a local build can set the same way.
+
 A daily security workflow checks `Cargo.lock` against the RustSec advisory
 database and audits the workflows; Dependabot opens grouped weekly update PRs.
 
