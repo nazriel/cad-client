@@ -14,6 +14,10 @@ target_args=()
 for target in "${targets[@]}"; do
   target_args+=(--target "$target")
 done
+# GCC on aarch64 turns libdbus's atomics into calls to libgcc's outline
+# helpers (__aarch64_ldadd4_sync), which a static musl link does not pull in;
+# compile them inline instead.
+export CFLAGS_aarch64_unknown_linux_musl="${CFLAGS_aarch64_unknown_linux_musl:+$CFLAGS_aarch64_unknown_linux_musl }-mno-outline-atomics"
 cargo build --release --locked -p cad-client --bin cad-cli "${target_args[@]}"
 
 # Linux builds link libdbus statically for the system keyring; its license
