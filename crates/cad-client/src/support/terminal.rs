@@ -1,6 +1,7 @@
 use std::io::{IsTerminal, Read, Write};
 use std::time::Duration;
 
+use secrecy::SecretString;
 use serde_json::Value;
 
 use crate::cli::OutputFormat;
@@ -60,6 +61,24 @@ pub(crate) trait Terminal: Send + Sync {
 
     /// Reads all bytes from the process standard input.
     fn read_stdin(&self) -> Result<Vec<u8>, CliError>;
+
+    /// Whether a person can answer a prompt: standard input and standard
+    /// error are both terminals.
+    fn is_interactive(&self) -> bool;
+
+    /// Asks for one line of text on stderr, with the typed text shown.
+    fn prompt(&self, label: &str) -> Result<String, CliError>;
+
+    /// Asks for one line of text on stderr, with the typed text hidden.
+    fn prompt_secret(&self, label: &str) -> Result<SecretString, CliError>;
+
+    /// Asks a yes/no question on stderr; only an explicit yes is a yes. Unlike
+    /// [`Terminal::confirm`], `--yes` does not answer it.
+    fn ask(&self, question: &str) -> Result<bool, CliError>;
+
+    /// Opens `url` in the user's browser. Returns whether a browser was
+    /// started: on a machine with no display there is none to start.
+    fn open_url(&self, url: &str) -> bool;
 
     /// Writes command data to stdout in the selected presentation format.
     fn write_output(&self, value: &Value, format: OutputFormat) -> Result<(), CliError>;
@@ -138,6 +157,50 @@ impl Terminal for ProcessTerminal {
         Ok(bytes)
     }
 
+    fn is_interactive(&self) -> bool {
+        std::io::stdin().is_terminal() && std::io::stderr().is_terminal()
+    }
+
+    fn prompt(&self, label: &str) -> Result<String, CliError> {
+        let terminal = console::Term::stderr();
+        terminal.write_str(&format!("{label} "))?;
+        Ok(terminal.read_line()?)
+    }
+
+    fn prompt_secret(&self, label: &str) -> Result<SecretString, CliError> {
+        let terminal = console::Term::stderr();
+        terminal.write_str(&format!("{label} "))?;
+        Ok(SecretString::from(terminal.read_secure_line()?))
+    }
+
+    fn ask(&self, question: &str) -> Result<bool, CliError> {
+        let answer = self.prompt(&format!("{question} (y/N)"))?;
+        Ok(matches!(
+            answer.trim().to_ascii_lowercase().as_str(),
+            "y" | "yes"
+        ))
+    }
+
+    fn open_url(&self, url: &str) -> bool {
+        let Some(mut command) = browser_command(url, |name| {
+            std::env::var_os(name).is_some_and(|value| !value.is_empty())
+        }) else {
+            return false;
+        };
+        let Ok(mut child) = command
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        else {
+            return false;
+        };
+        // Some openers stay in the foreground for as long as the browser runs,
+        // so nothing waits for it here; a thread reaps it whenever it ends.
+        std::thread::spawn(move || child.wait());
+        true
+    }
+
     fn write_output(&self, value: &Value, format: OutputFormat) -> Result<(), CliError> {
         let stdout = std::io::stdout();
         crate::output::write_styled(value, format, &mut stdout.lock(), TableStyle::detect())
@@ -159,6 +222,26 @@ impl Terminal for ProcessTerminal {
         let _ = self.status(StatusKind::Info, message);
         Box::new(SilentProgress)
     }
+}
+
+/// The command that opens `url` in a browser on this platform, or `None`
+/// where there is none to open: Linux without a display. `is_set` says
+/// whether an environment variable is set and not empty.
+fn browser_command(url: &str, is_set: impl Fn(&str) -> bool) -> Option<std::process::Command> {
+    let mut command = match std::env::consts::OS {
+        "macos" => std::process::Command::new("open"),
+        "windows" => {
+            let mut command = std::process::Command::new("cmd");
+            command.args(["/C", "start", ""]);
+            command
+        }
+        _ if is_set("DISPLAY") || is_set("WAYLAND_DISPLAY") => {
+            std::process::Command::new("xdg-open")
+        }
+        _ => return None,
+    };
+    command.arg(url);
+    Some(command)
 }
 
 /// Indicator for streams that cannot be redrawn.
@@ -223,6 +306,26 @@ impl Terminal for SilentTerminal {
         Ok(Vec::new())
     }
 
+    fn is_interactive(&self) -> bool {
+        false
+    }
+
+    fn prompt(&self, _label: &str) -> Result<String, CliError> {
+        Err(CliError::Input("no terminal to ask on".to_owned()))
+    }
+
+    fn prompt_secret(&self, _label: &str) -> Result<SecretString, CliError> {
+        Err(CliError::Input("no terminal to ask on".to_owned()))
+    }
+
+    fn ask(&self, _question: &str) -> Result<bool, CliError> {
+        Ok(false)
+    }
+
+    fn open_url(&self, _url: &str) -> bool {
+        false
+    }
+
     fn write_output(&self, _value: &Value, _format: OutputFormat) -> Result<(), CliError> {
         Ok(())
     }
@@ -233,5 +336,50 @@ impl Terminal for SilentTerminal {
 
     fn progress(&self, _message: &str) -> Box<dyn Progress> {
         Box::new(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::process::Command;
+
+    use super::browser_command;
+
+    fn arguments(command: &Command) -> Vec<String> {
+        command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_opens_a_browser_only_with_a_display() {
+        let url = "https://example.test/app";
+        assert!(browser_command(url, |_| false).is_none());
+        for variable in ["DISPLAY", "WAYLAND_DISPLAY"] {
+            let command = browser_command(url, |name| name == variable).expect("a display");
+            assert_eq!(command.get_program(), "xdg-open");
+            assert_eq!(arguments(&command), [url]);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_always_has_a_browser() {
+        let command = browser_command("https://example.test/", |_| false).expect("open");
+        assert_eq!(command.get_program(), "open");
+        assert_eq!(arguments(&command), ["https://example.test/"]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_starts_the_default_browser() {
+        let command = browser_command("https://example.test/", |_| false).expect("start");
+        assert_eq!(command.get_program(), "cmd");
+        assert_eq!(
+            arguments(&command),
+            ["/C", "start", "", "https://example.test/"]
+        );
     }
 }

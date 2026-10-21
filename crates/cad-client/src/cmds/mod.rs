@@ -2,6 +2,7 @@
 
 pub mod activity_category;
 pub mod activity_group;
+pub mod auth;
 pub mod benchmark;
 pub mod company;
 pub mod company_template;
@@ -56,6 +57,8 @@ const MAN_EXAMPLES: &[Example] = &[Example::new(
 /// Top-level `cad-cli` command.
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Log in to a server with an API key, check the login and log out.
+    Auth(auth::Group),
     /// Manage the company's activity categories.
     ActivityCategory(activity_category::Group),
     /// Manage the company's activity groups.
@@ -124,6 +127,7 @@ impl Command {
                 Invocation::Online(OnlineCommand::ActivityCategory(group))
             }
             Self::ActivityGroup(group) => Invocation::Online(OnlineCommand::ActivityGroup(group)),
+            Self::Auth(group) => Invocation::Auth(group),
             Self::Benchmark(group) => Invocation::Online(OnlineCommand::Benchmark(group)),
             Self::Context(group) => Invocation::Online(OnlineCommand::Context(group)),
             Self::Company(group) => Invocation::Online(OnlineCommand::Company(group)),
@@ -160,6 +164,9 @@ pub(crate) enum Invocation {
     /// Needs neither the platform nor its configuration, but returns data in
     /// the selected output format like an online command.
     Standalone(StandaloneCommand),
+    /// Manages the stored credentials of one server: it needs that server
+    /// but must not resolve credentials the way an online command does.
+    Auth(auth::Group),
     Online(OnlineCommand),
 }
 

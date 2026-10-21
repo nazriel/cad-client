@@ -38,9 +38,9 @@ use clap_complete::{CompleteEnv, Shell};
 use self::cache::{Cache, CacheKey, Candidate, Network};
 use crate::cli::{Cli, GlobalArgs};
 use crate::config::{
-    AppConfig, Environment, ProcessEnvironment, resolve_api_key_id, resolve_company_id,
-    resolve_server,
+    AppConfig, Environment, ProcessEnvironment, resolve_company_id, resolve_server,
 };
+use crate::support::credentials::{self, CredentialStore};
 
 /// Name the shell completes, and the program its registration calls back.
 ///
@@ -184,21 +184,27 @@ fn complete(resource: Resource, current: &OsStr) -> Vec<CompletionCandidate> {
         return Vec::new();
     };
     let words = WORDS.with_borrow(Clone::clone);
-    candidates(resource, &words, &ProcessEnvironment, SystemTime::now())
-        .into_iter()
-        .filter(|candidate| candidate.value.starts_with(current))
-        .map(|candidate| {
-            CompletionCandidate::new(candidate.value).help(candidate.help.map(Into::into))
-        })
-        .collect()
+    let store = CredentialStore::from_environment(&ProcessEnvironment);
+    candidates(
+        resource,
+        &words,
+        &ProcessEnvironment,
+        &store,
+        SystemTime::now(),
+    )
+    .into_iter()
+    .filter(|candidate| candidate.value.starts_with(current))
+    .map(|candidate| CompletionCandidate::new(candidate.value).help(candidate.help.map(Into::into)))
+    .collect()
 }
 
-/// Every candidate for `resource` in the context the preceding `words` and
-/// `environment` describe, unfiltered.
+/// Every candidate for `resource` in the context the preceding `words`,
+/// `environment` and credential `store` describe, unfiltered.
 pub(crate) fn candidates(
     resource: Resource,
     words: &[OsString],
     environment: &impl Environment,
+    store: &CredentialStore,
     now: SystemTime,
 ) -> Vec<Candidate> {
     let Some(mut global) = global_args(words) else {
@@ -206,12 +212,16 @@ pub(crate) fn candidates(
     };
     // Without a server and a key identifier there is no cache key either, so
     // there is nothing to answer from; the secret is only needed to go live.
-    let (Ok(server), Ok(api_key_id)) = (
-        resolve_server(&global, environment),
-        resolve_api_key_id(environment),
-    ) else {
+    // The credentials are found once, here, and reused by the live lookup, so
+    // the store is read at most once per request.
+    let Ok(server) = resolve_server(&global, environment) else {
         return Vec::new();
     };
+    let Ok(resolved) = credentials::resolve(environment, store, &credentials::origin_of(&server))
+    else {
+        return Vec::new();
+    };
+    let api_key_id = resolved.key_id();
     let origin = server.base_url().as_str();
     let key = match resource {
         Resource::Companies => CacheKey::session(resource.name(), origin, api_key_id),
@@ -228,7 +238,7 @@ pub(crate) fn candidates(
     let cache = Cache::from_environment(environment);
     cache::lookup(cache.as_ref(), &key, network, now, || {
         global.request_timeout = lookup::LIVE_TIMEOUT;
-        let config = AppConfig::resolve(&global, environment).ok()?;
+        let config = AppConfig::resolve_with(&global, environment, resolved).ok()?;
         lookup::fetch(resource, config)
     })
 }

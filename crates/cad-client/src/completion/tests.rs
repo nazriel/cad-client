@@ -16,6 +16,7 @@ use super::cache::{self, Cache, CacheKey, Candidate, Network, TTL};
 use super::{Resource, candidates, lookup, offline, preceding_words};
 use crate::cli::Cli;
 use crate::config::Environment;
+use crate::support::credentials::memory::empty_store;
 
 const API_KEY: Uuid = Uuid::from_u128(0x1234_5678_9abc_4def_8123_4567_89ab_cdef);
 const SECRET: &str = "s3cr3t-never-on-disk";
@@ -396,7 +397,13 @@ fn without_credentials_nothing_is_completed_and_nothing_is_cached() {
 
     for resource in [Resource::Companies, Resource::ReportingPeriods] {
         assert_eq!(
-            candidates(resource, &line, &environment, SystemTime::now()),
+            candidates(
+                resource,
+                &line,
+                &environment,
+                &empty_store(),
+                SystemTime::now()
+            ),
             NO_CANDIDATES
         );
     }
@@ -412,6 +419,7 @@ fn without_a_server_nothing_is_completed() {
             Resource::Companies,
             &words(&["cad-cli"]),
             &environment,
+            &empty_store(),
             SystemTime::now()
         ),
         NO_CANDIDATES
@@ -433,6 +441,7 @@ fn an_invalid_company_variable_completes_no_reporting_periods() {
                 "get"
             ]),
             &environment,
+            &empty_store(),
             SystemTime::now()
         ),
         NO_CANDIDATES
@@ -500,7 +509,13 @@ async fn complete(
     environment: FakeEnvironment,
 ) -> Vec<Candidate> {
     tokio::task::spawn_blocking(move || {
-        candidates(resource, &line, &environment, SystemTime::now())
+        candidates(
+            resource,
+            &line,
+            &environment,
+            &empty_store(),
+            SystemTime::now(),
+        )
     })
     .await
     .unwrap()
@@ -695,4 +710,196 @@ fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
         }
     }
     files
+}
+
+// --- stored credentials ---------------------------------------------------
+
+/// A keyring double that counts how often it is read.
+struct CountingKeyring {
+    reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl crate::support::credentials::Backend for CountingKeyring {
+    fn get(
+        &self,
+        _origin: &str,
+    ) -> Result<Option<secrecy::SecretString>, crate::support::credentials::StoreError> {
+        self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(None)
+    }
+
+    fn set(
+        &self,
+        _origin: &str,
+        _value: &secrecy::SecretString,
+    ) -> Result<(), crate::support::credentials::StoreError> {
+        unreachable!("completion never writes credentials")
+    }
+
+    fn remove(&self, _origin: &str) -> Result<bool, crate::support::credentials::StoreError> {
+        // Only the test's own set-up removes entries (a file write clears the
+        // keyring's); completion never does.
+        Ok(false)
+    }
+}
+
+/// A store whose credentials file holds a login for `server`, and whose
+/// keyring is read through a counter.
+fn store_with_login(
+    server: &MockServer,
+    dir: &Path,
+) -> (
+    crate::support::credentials::CredentialStore,
+    std::sync::Arc<std::sync::atomic::AtomicUsize>,
+) {
+    use crate::support::credentials::{CredentialStore, FileBackend, StoredCredential};
+
+    let reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let store = CredentialStore::new(
+        Some(Box::new(CountingKeyring {
+            reads: std::sync::Arc::clone(&reads),
+        })),
+        Some(FileBackend::new(
+            dir.join("config").join("credentials.json"),
+        )),
+    );
+    let origin = server.uri();
+    store
+        .save_in_file(
+            &origin,
+            &StoredCredential::api_key(
+                API_KEY,
+                secrecy::SecretString::from("cad_aks_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_AbCde"),
+                Uuid::nil(),
+                chrono::Utc::now(),
+            ),
+        )
+        .unwrap();
+    reads.store(0, std::sync::atomic::Ordering::SeqCst);
+    (store, reads)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stored_login_keys_the_cache_and_authenticates_the_live_lookup() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(IDENTITY_PATH))
+        .and(header(
+            "authorization",
+            format!("Bearer {API_KEY}.cad_aks_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_AbCde")
+                .as_str(),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(identity(COMPANY_ID)))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(COMPANIES_PATH))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!([company(
+                COMPANY_ID,
+                "Acme GmbH",
+                "ACTIVE"
+            )])),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let (store, reads) = store_with_login(&server, dir.path());
+    // No CAD_API_KEY or CAD_API_SECRET: the login is the only source.
+    let environment = FakeEnvironment::default()
+        .with("XDG_CACHE_HOME", dir.path().join("cache").to_string_lossy());
+    let line = server_words(&server, &[]);
+
+    let run = || {
+        candidates(
+            Resource::Companies,
+            &line,
+            &environment,
+            &store,
+            SystemTime::now(),
+        )
+    };
+    let first = tokio::task::block_in_place(run);
+    assert_eq!(
+        first,
+        [Candidate::new(
+            COMPANY_ID.to_string(),
+            Some("Acme GmbH".to_owned())
+        )]
+    );
+    // Found once for the key and the live lookup together: the keyring was
+    // asked a single time (it held nothing, so the file answered).
+    assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+    // The next Tab press is answered from the cache, which the stored Key ID
+    // keys: `expect(1)` fails the test on drop if the endpoint is called again.
+    let second = tokio::task::block_in_place(run);
+    assert_eq!(second, first);
+
+    let files = walk(&dir.path().join("cache"));
+    assert_eq!(files.len(), 1);
+    let stored = std::fs::read_to_string(&files[0]).unwrap();
+    assert!(!stored.contains("cad_aks_"), "{stored}");
+    assert!(!stored.contains(&API_KEY.to_string()), "{stored}");
+}
+
+#[test]
+fn without_a_stored_login_nothing_is_completed_and_the_keyring_is_read_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let store = crate::support::credentials::CredentialStore::new(
+        Some(Box::new(CountingKeyring {
+            reads: std::sync::Arc::clone(&reads),
+        })),
+        None,
+    );
+    let environment =
+        FakeEnvironment::default().with("XDG_CACHE_HOME", dir.path().to_string_lossy());
+    let line = words(&["cad-cli", "--environment", "staging"]);
+
+    assert_eq!(
+        candidates(
+            Resource::ReportingPeriods,
+            &line,
+            &environment,
+            &store,
+            SystemTime::now()
+        ),
+        NO_CANDIDATES
+    );
+    assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert!(std::fs::read_dir(dir.path()).unwrap().next().is_none());
+}
+
+#[test]
+fn the_environment_is_not_overridden_by_a_stored_login_in_completion() {
+    let dir = tempfile::tempdir().unwrap();
+    let reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let store = crate::support::credentials::CredentialStore::new(
+        Some(Box::new(CountingKeyring {
+            reads: std::sync::Arc::clone(&reads),
+        })),
+        None,
+    );
+    // Offline, and a cache that is fresh for the environment's key.
+    let environment = FakeEnvironment::configured(dir.path()).with(super::OFFLINE_VAR, "1");
+    let cache = Cache::from_environment(&environment).unwrap();
+    cache
+        .write(
+            &CacheKey::session("companies", "https://staging.carbonaltdelete.eu/", API_KEY),
+            &[candidate("from-cache")],
+            SystemTime::now(),
+        )
+        .unwrap();
+
+    let values = candidates(
+        Resource::Companies,
+        &words(&["cad-cli", "--environment", "staging"]),
+        &environment,
+        &store,
+        SystemTime::now(),
+    );
+    assert_eq!(values, [candidate("from-cache")]);
+    assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 0);
 }

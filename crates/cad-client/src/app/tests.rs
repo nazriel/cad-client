@@ -19,6 +19,7 @@ use crate::cli::OutputFormat;
 use crate::config::Environment;
 use crate::error::CliError;
 use crate::output::TableStyle;
+use crate::support::credentials::memory::empty_store;
 use crate::support::terminal::{Progress, StatusKind, Terminal};
 
 const COMPANY_ID: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0042);
@@ -118,6 +119,30 @@ impl Terminal for FakeTerminal {
         Ok(Vec::new())
     }
 
+    fn is_interactive(&self) -> bool {
+        self.interactive
+    }
+
+    fn prompt(&self, _label: &str) -> Result<String, CliError> {
+        Err(CliError::Input(
+            "this fake terminal answers no prompts".to_owned(),
+        ))
+    }
+
+    fn prompt_secret(&self, _label: &str) -> Result<secrecy::SecretString, CliError> {
+        Err(CliError::Input(
+            "this fake terminal answers no prompts".to_owned(),
+        ))
+    }
+
+    fn ask(&self, _question: &str) -> Result<bool, CliError> {
+        Ok(false)
+    }
+
+    fn open_url(&self, _url: &str) -> bool {
+        false
+    }
+
     fn write_output(
         &self,
         value: &serde_json::Value,
@@ -194,7 +219,7 @@ async fn run_cli_status(
         .try_get_matches_from(arguments)
         .expect("arguments parse");
     let cli = Cli::from_arg_matches(&matches).expect("arguments map to Cli");
-    execute(cli, &matches, environment, terminal).await
+    execute(cli, &matches, environment, &empty_store(), terminal).await
 }
 
 #[test]
@@ -1105,4 +1130,147 @@ async fn update_check_needs_no_platform_configuration_and_renders_its_result() {
     assert_eq!(statuses.len(), 1);
     assert_eq!(statuses[0].0, StatusKind::Info);
     assert!(statuses[0].1.starts_with("cad-cli 99.0.0 is available"));
+}
+
+/// A store whose credentials file holds a login for `origin`, in `dir`.
+fn store_with_login(
+    origin: &str,
+    dir: &std::path::Path,
+) -> crate::support::credentials::CredentialStore {
+    use crate::support::credentials::{CredentialStore, FileBackend, StoredCredential};
+
+    let store = CredentialStore::new(
+        None,
+        Some(FileBackend::new(
+            dir.join("cad-cli").join("credentials.json"),
+        )),
+    );
+    store
+        .save_in_file(
+            origin,
+            &StoredCredential::api_key(
+                Uuid::from_u128(0xaa),
+                secrecy::SecretString::from("cad_aks_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_AbCde"),
+                Uuid::nil(),
+                chrono::Utc::now(),
+            ),
+        )
+        .unwrap();
+    store
+}
+
+async fn run_with_store(
+    arguments: &[&str],
+    store: &crate::support::credentials::CredentialStore,
+    terminal: &FakeTerminal,
+) -> Result<u8, CliError> {
+    let matches = Cli::command()
+        .try_get_matches_from(arguments)
+        .expect("arguments parse");
+    let cli = Cli::from_arg_matches(&matches).expect("arguments map to Cli");
+    execute(cli, &matches, &FakeEnvironment::default(), store, terminal).await
+}
+
+#[tokio::test]
+async fn an_online_command_authenticates_with_the_stored_login() {
+    let server = mock_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let store = store_with_login(&server.uri(), dir.path());
+    let terminal = FakeTerminal::default();
+
+    let status = run_with_store(
+        &[
+            "cad-cli",
+            "--server-url",
+            &server.uri(),
+            "--allow-insecure-http",
+            "--output",
+            "json",
+            "context",
+            "show",
+        ],
+        &store,
+        &terminal,
+    )
+    .await
+    .expect("the stored login is enough");
+
+    assert_eq!(status, 0);
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0]
+            .headers
+            .get("authorization")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        format!(
+            "Bearer {}.cad_aks_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_AbCde",
+            Uuid::from_u128(0xaa)
+        )
+    );
+}
+
+#[tokio::test]
+async fn an_online_command_without_any_login_fails_before_a_request() {
+    let server = mock_server().await;
+    let store = crate::support::credentials::memory::empty_store();
+    let terminal = FakeTerminal::default();
+
+    let error = run_with_store(
+        &[
+            "cad-cli",
+            "--server-url",
+            &server.uri(),
+            "--allow-insecure-http",
+            "context",
+            "show",
+        ],
+        &store,
+        &terminal,
+    )
+    .await
+    .expect_err("no credentials anywhere");
+
+    assert!(matches!(error, CliError::AuthConfig(_)));
+    assert!(error.to_string().contains("cad-cli auth login"));
+    assert_eq!(request_paths(&server).await, Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn auth_commands_write_their_data_to_stdout_and_their_lines_to_stderr() {
+    let dir = tempfile::tempdir().unwrap();
+    let origin = "http://127.0.0.1:1";
+    let store = store_with_login(origin, dir.path());
+    let terminal = FakeTerminal::default();
+
+    let status = run_with_store(
+        &[
+            "cad-cli",
+            "--server-url",
+            origin,
+            "--allow-insecure-http",
+            "--output",
+            "json",
+            "auth",
+            "logout",
+        ],
+        &store,
+        &terminal,
+    )
+    .await
+    .expect("logout needs no server");
+
+    assert_eq!(status, 0);
+    let stdout: serde_json::Value = serde_json::from_str(&terminal.stdout()).unwrap();
+    assert_eq!(
+        stdout,
+        serde_json::json!({"origin": origin, "removed": ["file"]})
+    );
+    let statuses = terminal.statuses();
+    assert_eq!(statuses.len(), 1);
+    assert_eq!(statuses[0].0, StatusKind::Success);
+    assert!(statuses[0].1.contains("logged out of"));
+    assert!(!dir.path().join("cad-cli").join("credentials.json").exists());
 }

@@ -18,6 +18,7 @@ use crate::cmds::Invocation;
 use crate::config::{AppConfig, Environment, ProcessEnvironment};
 use crate::error::CliError;
 use crate::exec::update::notice::{self, BackgroundCheck};
+use crate::support::credentials::CredentialStore;
 use crate::support::terminal::{ProcessTerminal, StatusKind, Terminal};
 
 /// Parses the supplied process arguments and executes the application.
@@ -56,7 +57,8 @@ where
     .then(|| BackgroundCheck::start(&environment))
     .flatten();
 
-    let code = match execute(cli, &matches, &environment, &terminal).await {
+    let store = CredentialStore::from_environment(&environment);
+    let code = match execute(cli, &matches, &environment, &store, &terminal).await {
         Ok(status) => ExitCode::from(status),
         Err(error) => {
             let _ = terminal.status(StatusKind::Error, &error.to_string());
@@ -77,6 +79,7 @@ async fn execute(
     cli: Cli,
     matches: &ArgMatches,
     environment: &impl Environment,
+    store: &CredentialStore,
     terminal: &dyn Terminal,
 ) -> Result<u8, CliError> {
     let output = cli.global.output;
@@ -100,10 +103,20 @@ async fn execute(
             }
             return Ok(report.exit_status);
         }
+        Invocation::Auth(group) => {
+            let report = group
+                .run(&command_context, &cli.global, environment, store)
+                .await?;
+            terminal.write_output(&report.value, output)?;
+            for (kind, message) in &report.messages {
+                terminal.status(*kind, message)?;
+            }
+            return Ok(0);
+        }
         Invocation::Online(online) => online,
     };
 
-    let config = AppConfig::resolve(&cli.global, environment)?;
+    let config = AppConfig::resolve(&cli.global, environment, store)?;
     // Local preconditions are checked before the identity request so a typo
     // in a path does not cost a network round-trip to fail on.
     check_local_inputs(matches)?;

@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 use crate::cli::{EnvironmentName, GlobalArgs};
 use crate::error::CliError;
+use crate::support::credentials::{self, CredentialStore, Resolved};
 
 /// Environment access seam used to make resolution deterministic in tests.
 pub trait Environment {
@@ -44,6 +45,10 @@ pub struct AppConfig {
 impl AppConfig {
     /// Resolves and validates CLI/environment configuration.
     ///
+    /// The credentials come from the environment, or else from what
+    /// `cad-cli auth login` stored for the selected server (see
+    /// [`credentials::resolve`]).
+    ///
     /// # Errors
     ///
     /// Returns [`CliError`] when the server, credentials, company identifier,
@@ -51,23 +56,36 @@ impl AppConfig {
     pub(crate) fn resolve(
         args: &GlobalArgs,
         environment: &impl Environment,
+        store: &CredentialStore,
     ) -> Result<Self, CliError> {
-        let server = resolve_server(args, environment)?
-            .with_request_timeout(args.request_timeout)
-            .map_err(CliError::from)?;
+        let server = resolve_timed_server(args, environment)?;
+        let resolved = credentials::resolve(environment, store, &credentials::origin_of(&server))?;
+        Self::assemble(args, environment, server, resolved)
+    }
 
-        let api_key = resolve_api_key_id(environment)?;
+    /// Like [`Self::resolve`], for a caller that has already found the
+    /// credentials and must not read the store a second time.
+    pub(crate) fn resolve_with(
+        args: &GlobalArgs,
+        environment: &impl Environment,
+        resolved: Resolved,
+    ) -> Result<Self, CliError> {
+        let server = resolve_timed_server(args, environment)?;
+        Self::assemble(args, environment, server, resolved)
+    }
 
-        let api_secret = environment
-            .get("CAD_API_SECRET")
-            .filter(|secret| !secret.is_empty())
-            .ok_or_else(|| CliError::auth_config("CAD_API_SECRET is not set or empty"))?;
-
+    fn assemble(
+        args: &GlobalArgs,
+        environment: &impl Environment,
+        server: ServerConfig,
+        resolved: Resolved,
+    ) -> Result<Self, CliError> {
+        let credentials = resolved.into_credentials()?;
         let company_id = resolve_company_id(args, environment)?;
 
         Ok(Self {
             server,
-            credentials: ApiKeyV2Credentials::new(api_key, api_secret),
+            credentials,
             company_id,
         })
     }
@@ -89,16 +107,13 @@ impl fmt::Debug for AppConfig {
     }
 }
 
-/// Reads the identifier half of the machine API key, never its secret.
-///
-/// Shell completion uses it on its own to tell API keys apart in its cache
-/// without touching `CAD_API_SECRET`.
-pub(crate) fn resolve_api_key_id(environment: &impl Environment) -> Result<Uuid, CliError> {
-    environment
-        .get("CAD_API_KEY")
-        .ok_or_else(|| CliError::auth_config("CAD_API_KEY is not set"))?
-        .parse::<Uuid>()
-        .map_err(|error| CliError::auth_config(format!("CAD_API_KEY is not a UUID: {error}")))
+pub(crate) fn resolve_timed_server(
+    args: &GlobalArgs,
+    environment: &impl Environment,
+) -> Result<ServerConfig, CliError> {
+    resolve_server(args, environment)?
+        .with_request_timeout(args.request_timeout)
+        .map_err(CliError::from)
 }
 
 /// Applies the documented precedence: `--server-url`, `CAD_SERVER_URL`,
@@ -181,6 +196,7 @@ mod tests {
 
     use super::*;
     use crate::cli::Cli;
+    use crate::support::credentials::memory::empty_store;
 
     #[derive(Default)]
     struct Env(HashMap<String, String>);
@@ -205,6 +221,7 @@ mod tests {
         AppConfig::resolve(
             &Cli::try_parse_from(arguments).unwrap().global,
             &credentials(),
+            &empty_store(),
         )
     }
 
@@ -236,7 +253,7 @@ mod tests {
             "CAD_SERVER_URL".into(),
             "https://custom.example.test".into(),
         );
-        let config = AppConfig::resolve(&cli.global, &env).unwrap();
+        let config = AppConfig::resolve(&cli.global, &env, &empty_store()).unwrap();
         assert_eq!(base_url(&config), "https://custom.example.test/");
     }
 
@@ -314,7 +331,7 @@ mod tests {
             .unwrap();
         let mut env = credentials();
         env.0.insert("CAD_COMPANY_ID".into(), "not-a-uuid".into());
-        let error = AppConfig::resolve(&cli.global, &env).unwrap_err();
+        let error = AppConfig::resolve(&cli.global, &env, &empty_store()).unwrap_err();
         assert!(error.to_string().contains("CAD_COMPANY_ID"));
     }
 
@@ -331,7 +348,7 @@ mod tests {
         let cli = Cli::try_parse_from(["cad-cli", "company", "list"]).unwrap();
         let mut env = credentials();
         env.0.insert("CAD_ENV".into(), "qa".into());
-        let error = AppConfig::resolve(&cli.global, &env).unwrap_err();
+        let error = AppConfig::resolve(&cli.global, &env, &empty_store()).unwrap_err();
         assert!(error.to_string().contains("CAD_ENV"));
     }
 
@@ -340,7 +357,7 @@ mod tests {
         let cli = Cli::try_parse_from(["cad-cli", "company", "list"]).unwrap();
         let mut env = credentials();
         env.0.insert("CAD_ENV".into(), "Staging".into());
-        let config = AppConfig::resolve(&cli.global, &env).unwrap();
+        let config = AppConfig::resolve(&cli.global, &env, &empty_store()).unwrap();
         assert_eq!(base_url(&config), "https://staging.carbonaltdelete.eu/");
     }
 }

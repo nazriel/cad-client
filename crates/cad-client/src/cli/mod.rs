@@ -20,11 +20,12 @@ use help::{Example, Variable};
 const ENVIRONMENT: &[Variable] = &[
     Variable::new(
         "CAD_API_KEY",
-        "Machine API key ID (a UUID). Required by every command that calls the platform",
+        "Machine API key ID (a UUID). When it or CAD_API_SECRET is set, the environment alone \
+         decides which key commands use; otherwise they use the login `cad-cli auth login` stored",
     ),
     Variable::new(
         "CAD_API_SECRET",
-        "Secret of the machine API key. Required by every command that calls the platform",
+        "Secret of the machine API key. Used with CAD_API_KEY, and instead of a stored login",
     ),
     Variable::new(
         "CAD_SERVER_URL",
@@ -37,6 +38,11 @@ const ENVIRONMENT: &[Variable] = &[
     Variable::new(
         "CAD_COMPANY_ID",
         "Accessible company to act on when --company-id is not given",
+    ),
+    Variable::new(
+        "CAD_CLI_KEYRING",
+        "Set to 0 (or false, no, off) to never use the system keyring: `cad-cli auth login` then \
+         keeps the key in the credentials file only. For machines without a keyring",
     ),
     Variable::new(
         "CAD_CLI_COMPLETE_OFFLINE",
