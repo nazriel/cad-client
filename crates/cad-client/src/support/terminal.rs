@@ -46,6 +46,10 @@ impl StatusKind {
 /// the Ctrl-C arm of a `tokio::select!` — cannot leave a spinner on the screen.
 pub(crate) trait Progress: Send {}
 
+/// Says whether a typed value is acceptable: `Err` holds the reason, shown to
+/// the person before they type again.
+pub(crate) type Validator = fn(&str) -> Result<(), String>;
+
 /// Process I/O used by command handlers.
 pub(crate) trait Terminal: Send + Sync {
     /// Writes a user-facing status message to stderr.
@@ -66,11 +70,22 @@ pub(crate) trait Terminal: Send + Sync {
     /// error are both terminals.
     fn is_interactive(&self) -> bool;
 
-    /// Asks for one line of text on stderr, with the typed text shown.
-    fn prompt(&self, label: &str) -> Result<String, CliError>;
+    /// Asks for one line of text on stderr, with the typed text shown. A
+    /// value `validate` rejects is not returned: the reason is shown and the
+    /// question stays open until the value is valid.
+    ///
+    /// # Errors
+    ///
+    /// [`CliError::Cancelled`] when the person gives up with Esc or Ctrl-C.
+    fn prompt(&self, label: &str, validate: Validator) -> Result<String, CliError>;
 
-    /// Asks for one line of text on stderr, with the typed text hidden.
-    fn prompt_secret(&self, label: &str) -> Result<SecretString, CliError>;
+    /// Asks for one line of text on stderr, with each typed character masked
+    /// by `*`. Validated as [`Terminal::prompt`] is.
+    ///
+    /// # Errors
+    ///
+    /// [`CliError::Cancelled`] when the person gives up with Esc or Ctrl-C.
+    fn prompt_secret(&self, label: &str, validate: Validator) -> Result<SecretString, CliError>;
 
     /// Asks a yes/no question on stderr; only an explicit yes is a yes. Unlike
     /// [`Terminal::confirm`], `--yes` does not answer it.
@@ -161,24 +176,28 @@ impl Terminal for ProcessTerminal {
         std::io::stdin().is_terminal() && std::io::stderr().is_terminal()
     }
 
-    fn prompt(&self, label: &str) -> Result<String, CliError> {
-        let terminal = console::Term::stderr();
-        terminal.write_str(&format!("{label} "))?;
-        Ok(terminal.read_line()?)
+    fn prompt(&self, label: &str, validate: Validator) -> Result<String, CliError> {
+        inquire::Text::new(label)
+            .with_validator(inquire_validator(validate))
+            .prompt()
+            .map_err(prompt_error)
     }
 
-    fn prompt_secret(&self, label: &str) -> Result<SecretString, CliError> {
-        let terminal = console::Term::stderr();
-        terminal.write_str(&format!("{label} "))?;
-        Ok(SecretString::from(terminal.read_secure_line()?))
+    fn prompt_secret(&self, label: &str, validate: Validator) -> Result<SecretString, CliError> {
+        inquire::Password::new(label)
+            .with_display_mode(inquire::PasswordDisplayMode::Masked)
+            .without_confirmation()
+            .with_validator(inquire_validator(validate))
+            .prompt()
+            .map(SecretString::from)
+            .map_err(prompt_error)
     }
 
     fn ask(&self, question: &str) -> Result<bool, CliError> {
-        let answer = self.prompt(&format!("{question} (y/N)"))?;
-        Ok(matches!(
-            answer.trim().to_ascii_lowercase().as_str(),
-            "y" | "yes"
-        ))
+        inquire::Confirm::new(question)
+            .with_default(false)
+            .prompt()
+            .map_err(prompt_error)
     }
 
     fn open_url(&self, url: &str) -> bool {
@@ -221,6 +240,40 @@ impl Terminal for ProcessTerminal {
         // plain status call printed before there were spinners.
         let _ = self.status(StatusKind::Info, message);
         Box::new(SilentProgress)
+    }
+}
+
+/// `validate` as a validator `inquire` accepts: the reason becomes the message
+/// shown under the field.
+fn inquire_validator(
+    validate: Validator,
+) -> impl Fn(&str) -> Result<inquire::validator::Validation, inquire::CustomUserError> + Clone {
+    use inquire::validator::Validation;
+
+    move |text| {
+        Ok(match validate(text) {
+            Ok(()) => Validation::Valid,
+            Err(reason) => Validation::Invalid(reason.into()),
+        })
+    }
+}
+
+/// Esc and Ctrl-C cancel the command, as Ctrl-C does elsewhere.
+///
+/// With the `console` backend, Ctrl-C reaches the process as SIGINT, which
+/// ends it unless a handler is installed; a handler that turns it into a read
+/// error of kind `Interrupted` is a cancellation too.
+fn prompt_error(error: inquire::InquireError) -> CliError {
+    use inquire::InquireError;
+
+    match error {
+        InquireError::OperationCanceled | InquireError::OperationInterrupted => CliError::Cancelled,
+        InquireError::IO(error) if error.kind() == std::io::ErrorKind::Interrupted => {
+            CliError::Cancelled
+        }
+        InquireError::IO(error) => CliError::Io(error),
+        InquireError::NotTTY => CliError::Input("no terminal to ask on".to_owned()),
+        other => CliError::Input(other.to_string()),
     }
 }
 
@@ -310,11 +363,11 @@ impl Terminal for SilentTerminal {
         false
     }
 
-    fn prompt(&self, _label: &str) -> Result<String, CliError> {
+    fn prompt(&self, _label: &str, _validate: Validator) -> Result<String, CliError> {
         Err(CliError::Input("no terminal to ask on".to_owned()))
     }
 
-    fn prompt_secret(&self, _label: &str) -> Result<SecretString, CliError> {
+    fn prompt_secret(&self, _label: &str, _validate: Validator) -> Result<SecretString, CliError> {
         Err(CliError::Input("no terminal to ask on".to_owned()))
     }
 
@@ -343,13 +396,35 @@ impl Terminal for SilentTerminal {
 mod tests {
     use std::process::Command;
 
-    use super::browser_command;
+    use super::{browser_command, prompt_error};
+    use crate::error::CliError;
 
     fn arguments(command: &Command) -> Vec<String> {
         command
             .get_args()
             .map(|argument| argument.to_string_lossy().into_owned())
             .collect()
+    }
+
+    #[test]
+    fn giving_up_on_a_prompt_cancels_the_command() {
+        use inquire::InquireError;
+
+        for error in [
+            InquireError::OperationCanceled,
+            InquireError::OperationInterrupted,
+            InquireError::IO(std::io::ErrorKind::Interrupted.into()),
+        ] {
+            assert!(matches!(prompt_error(error), CliError::Cancelled));
+        }
+        assert!(matches!(
+            prompt_error(InquireError::IO(std::io::ErrorKind::BrokenPipe.into())),
+            CliError::Io(_)
+        ));
+        assert!(matches!(
+            prompt_error(InquireError::NotTTY),
+            CliError::Input(_)
+        ));
     }
 
     #[cfg(target_os = "linux")]

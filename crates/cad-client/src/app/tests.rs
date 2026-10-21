@@ -20,7 +20,7 @@ use crate::config::Environment;
 use crate::error::CliError;
 use crate::output::TableStyle;
 use crate::support::credentials::memory::empty_store;
-use crate::support::terminal::{Progress, StatusKind, Terminal};
+use crate::support::terminal::{Progress, StatusKind, Terminal, Validator};
 
 const COMPANY_ID: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0042);
 const IDENTITY_PATH: &str = "/api/auth/v2/machine/identity";
@@ -123,13 +123,17 @@ impl Terminal for FakeTerminal {
         self.interactive
     }
 
-    fn prompt(&self, _label: &str) -> Result<String, CliError> {
+    fn prompt(&self, _label: &str, _validate: Validator) -> Result<String, CliError> {
         Err(CliError::Input(
             "this fake terminal answers no prompts".to_owned(),
         ))
     }
 
-    fn prompt_secret(&self, _label: &str) -> Result<secrecy::SecretString, CliError> {
+    fn prompt_secret(
+        &self,
+        _label: &str,
+        _validate: Validator,
+    ) -> Result<secrecy::SecretString, CliError> {
         Err(CliError::Input(
             "this fake terminal answers no prompts".to_owned(),
         ))

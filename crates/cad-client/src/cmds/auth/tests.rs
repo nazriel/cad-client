@@ -23,7 +23,7 @@ use crate::config::Environment;
 use crate::error::CliError;
 use crate::support::credentials::memory::MemoryBackend;
 use crate::support::credentials::{CredentialStore, FileBackend};
-use crate::support::terminal::{Progress, StatusKind, Terminal};
+use crate::support::terminal::{Progress, StatusKind, Terminal, Validator};
 
 const KEY_ID: &str = "00000000-0000-0000-0000-0000000000aa";
 const SECRET: &str = "cad_aks_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_AbCde";
@@ -84,6 +84,27 @@ impl Scripted {
         }
     }
 
+    /// What a person typing into `inquire` does: a rejected value is shown with
+    /// its reason as a warning and typed again; with nothing left to type, they
+    /// press Esc.
+    fn answer(
+        &self,
+        queue: &Mutex<VecDeque<String>>,
+        validate: Validator,
+    ) -> Result<String, CliError> {
+        loop {
+            let typed = queue
+                .lock()
+                .unwrap()
+                .pop_front()
+                .ok_or(CliError::Cancelled)?;
+            match validate(&typed) {
+                Ok(()) => return Ok(typed),
+                Err(reason) => self.status(StatusKind::Warning, &reason)?,
+            }
+        }
+    }
+
     fn opened(&self) -> Vec<String> {
         self.opened.lock().unwrap().clone()
     }
@@ -126,25 +147,14 @@ impl Terminal for Scripted {
         self.interactive
     }
 
-    fn prompt(&self, label: &str) -> Result<String, CliError> {
+    fn prompt(&self, label: &str, validate: Validator) -> Result<String, CliError> {
         assert_eq!(label, "Key ID:");
-        Ok(self
-            .key_ids
-            .lock()
-            .unwrap()
-            .pop_front()
-            .expect("a scripted Key ID"))
+        self.answer(&self.key_ids, validate)
     }
 
-    fn prompt_secret(&self, label: &str) -> Result<SecretString, CliError> {
+    fn prompt_secret(&self, label: &str, validate: Validator) -> Result<SecretString, CliError> {
         assert_eq!(label, "Secret:");
-        Ok(SecretString::from(
-            self.secrets
-                .lock()
-                .unwrap()
-                .pop_front()
-                .expect("a scripted Secret"),
-        ))
+        self.answer(&self.secrets, validate).map(SecretString::from)
     }
 
     fn ask(&self, question: &str) -> Result<bool, CliError> {
@@ -624,9 +634,9 @@ async fn at_a_terminal_the_two_values_are_asked_apart_and_asked_again_when_malfo
 }
 
 #[tokio::test]
-async fn a_value_that_stays_malformed_is_given_up_on_after_three_tries() {
+async fn a_value_that_stays_malformed_is_asked_again_until_the_person_cancels() {
     let world = world().await;
-    let terminal = Scripted::typing(&["a", "b", "c"], &[], &[]);
+    let terminal = Scripted::typing(&["a", "b", "c", "d"], &[], &[]);
     let error = world
         .run(
             &["auth", "login", "--no-browser"],
@@ -635,15 +645,15 @@ async fn a_value_that_stays_malformed_is_given_up_on_after_three_tries() {
         )
         .await
         .unwrap_err();
-    assert!(matches!(error, CliError::Input(_)));
-    assert_eq!(exit_code(&error), ExitCode::from(2));
+    assert!(matches!(error, CliError::Cancelled));
+    assert_eq!(exit_code(&error), ExitCode::from(130));
     assert_eq!(
         terminal
             .statuses()
             .iter()
             .filter(|(kind, _)| *kind == StatusKind::Warning)
             .count(),
-        2
+        4
     );
     assert_eq!(world.requests().await, 0);
 }

@@ -19,9 +19,6 @@ use crate::support::credentials::{
 };
 use crate::support::terminal::{StatusKind, Terminal};
 
-/// How many times a malformed value is asked for again.
-const ATTEMPTS: usize = 3;
-
 /// The command's stdout value.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -112,37 +109,30 @@ fn read_token(terminal: &dyn Terminal) -> Result<(Uuid, SecretString), CliError>
 }
 
 /// The two values the API keys page shows, asked for separately: the Key ID
-/// with the typed text shown, the Secret hidden.
+/// with the typed text shown, the Secret masked. Each is asked again, with the
+/// reason, until it is well formed.
 fn ask_for_key(terminal: &dyn Terminal) -> Result<(Uuid, SecretString), CliError> {
-    let key_id = ask_until_valid(
-        terminal,
-        || terminal.prompt("Key ID:"),
-        |text| ApiKeyV2Credentials::parse_key_id(text),
-    )?;
-    let secret = ask_until_valid(
-        terminal,
-        || terminal.prompt_secret("Secret:"),
-        |text| ApiKeyV2Credentials::parse_secret(text.expose_secret()),
-    )?;
-    Ok((key_id, secret))
+    let key_id = terminal.prompt("Key ID:", |text| {
+        ApiKeyV2Credentials::parse_key_id(text)
+            .map(|_| ())
+            .map_err(reason)
+    })?;
+    let secret = terminal.prompt_secret("Secret:", |text| {
+        ApiKeyV2Credentials::parse_secret(text)
+            .map(|_| ())
+            .map_err(reason)
+    })?;
+    Ok((
+        ApiKeyV2Credentials::parse_key_id(&key_id).map_err(input_error)?,
+        ApiKeyV2Credentials::parse_secret(secret.expose_secret()).map_err(input_error)?,
+    ))
 }
 
-/// Asks again, explaining what is wrong, up to [`ATTEMPTS`] times in all.
-fn ask_until_valid<R, T>(
-    terminal: &dyn Terminal,
-    mut read: impl FnMut() -> Result<R, CliError>,
-    parse: impl Fn(&R) -> cad_api::Result<T>,
-) -> Result<T, CliError> {
-    let mut attempt = 1;
-    loop {
-        match parse(&read()?) {
-            Ok(value) => return Ok(value),
-            Err(error) if attempt >= ATTEMPTS => return Err(input_error(error)),
-            Err(error) => {
-                terminal.status(StatusKind::Warning, &input_error(error).to_string())?;
-                attempt += 1;
-            }
-        }
+/// Why a typed value was rejected, without the error's own prefix.
+fn reason(error: cad_api::Error) -> String {
+    match error {
+        cad_api::Error::InvalidInput { message } => message,
+        other => other.to_string(),
     }
 }
 

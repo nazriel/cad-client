@@ -31,6 +31,7 @@ console.workspace = true
 flate2.workspace = true
 humantime.workspace = true
 indicatif.workspace = true
+inquire.workspace = true
 keyring-core.workspace = true
 reqwest.workspace = true
 ring.workspace = true
