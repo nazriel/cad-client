@@ -127,14 +127,7 @@ same in the terminal.
 | [`man`](docs/cli/man.md) | Print the manual page in roff format |
 <!-- cli-commands:end -->
 
-## Examples
-
-```console
-cad-cli company list
-cad-cli reporting-period list --output json
-cad-cli custom-option list --field-id 00000000-0000-0000-0000-000000000000
-cad-cli report create --input report.json --wait
-```
+## Input and output
 
 Mutation bodies use the API's camelCase JSON representation and can be read
 from a file or stdin (`--input -`). Human-readable tables are the default;
@@ -360,18 +353,7 @@ sibling order. `duplicate <id> --include-children` returns the duplicated unit
 or units; omit the flag to duplicate only the selected unit. `delete <id>` asks
 for confirmation unless `--yes` is supplied.
 
-## Shell completions and manual page
-
-Both are generated from the command definition itself, so they never drift from
-the binary. Neither needs credentials or a reachable server.
-
-```console
-cad-cli completions zsh > "${fpath[1]}/_cad-cli"
-cad-cli completions bash > /usr/local/etc/bash_completion.d/cad-cli
-cad-cli man > /usr/local/share/man/man1/cad-cli.1
-```
-
-`completions` accepts `bash`, `elvish`, `fish`, `powershell` and `zsh`.
+## Inventory lines
 
 Inventory filters use the platform's `attribute_operator=value` form. List
 operators are comma-delimited, so a literal comma inside a value is written as
@@ -380,6 +362,14 @@ operators are comma-delimited, so a literal comma inside a value is written as
 ```console
 cad-cli inventory-line list --filter 'country_inList=PL,,DE' --sort date_desc
 ```
+
+## Shell completions and manual page
+
+`cad-cli completions <shell>` and `cad-cli man` print a completion script and a
+roff manual page generated from the command definition itself, so they never
+drift from the binary. Neither needs credentials or a reachable server; the
+[completions](docs/cli/completions.md) and [man](docs/cli/man.md) references
+show where to install them.
 
 ## License
 
