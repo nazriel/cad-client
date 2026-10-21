@@ -25,7 +25,7 @@ const LIST_EXAMPLES: &[Example] = &[Example::new(
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     /// List reusable company templates accessible to the authenticated user.
-    #[command(after_long_help = help::examples(LIST_EXAMPLES))]
+    #[command(after_help = help::examples(LIST_EXAMPLES))]
     List,
 }
 

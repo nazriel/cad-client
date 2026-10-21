@@ -46,16 +46,16 @@ const DELETE_EXAMPLES: &[Example] = &[
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     /// List custom fields ordered by position.
-    #[command(after_long_help = help::examples(LIST_EXAMPLES))]
+    #[command(after_help = help::examples(LIST_EXAMPLES))]
     List,
     /// Create a custom field from JSON input.
-    #[command(after_long_help = help::examples(CREATE_EXAMPLES))]
+    #[command(after_help = help::examples(CREATE_EXAMPLES))]
     Create(InputArgs),
     /// Fully replace a custom field from JSON input.
-    #[command(after_long_help = help::examples(REPLACE_EXAMPLES))]
+    #[command(after_help = help::examples(REPLACE_EXAMPLES))]
     Replace(IdInputArgs<CustomFieldId>),
     /// Delete a custom field.
-    #[command(after_long_help = help::examples(DELETE_EXAMPLES))]
+    #[command(after_help = help::examples(DELETE_EXAMPLES))]
     Delete(IdArgs<CustomFieldId>),
 }
 

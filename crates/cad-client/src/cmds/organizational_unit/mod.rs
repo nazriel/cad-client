@@ -74,25 +74,25 @@ const DUPLICATE_EXAMPLES: &[Example] = &[
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     /// List organizational units for the selected company.
-    #[command(after_long_help = help::examples(LIST_EXAMPLES))]
+    #[command(after_help = help::examples(LIST_EXAMPLES))]
     List,
     /// Get one organizational unit.
-    #[command(after_long_help = help::examples(GET_EXAMPLES))]
+    #[command(after_help = help::examples(GET_EXAMPLES))]
     Get(IdArgs<OrganizationalUnitId>),
     /// Create an organizational unit from JSON --input <file|-> and return it.
-    #[command(after_long_help = help::examples(CREATE_EXAMPLES))]
+    #[command(after_help = help::examples(CREATE_EXAMPLES))]
     Create(InputArgs),
     /// Update an organizational unit from JSON --input <file|-> and return it.
-    #[command(after_long_help = help::examples(UPDATE_EXAMPLES))]
+    #[command(after_help = help::examples(UPDATE_EXAMPLES))]
     Update(IdInputArgs<OrganizationalUnitId>),
     /// Delete an organizational unit after confirmation.
-    #[command(after_long_help = help::examples(DELETE_EXAMPLES))]
+    #[command(after_help = help::examples(DELETE_EXAMPLES))]
     Delete(IdArgs<OrganizationalUnitId>),
     /// Count inventory entries assigned to one organizational unit.
-    #[command(after_long_help = help::examples(COUNT_ENTRIES_EXAMPLES))]
+    #[command(after_help = help::examples(COUNT_ENTRIES_EXAMPLES))]
     CountEntries(IdArgs<OrganizationalUnitId>),
     /// Duplicate an organizational unit and optionally all descendants.
-    #[command(after_long_help = help::examples(DUPLICATE_EXAMPLES))]
+    #[command(after_help = help::examples(DUPLICATE_EXAMPLES))]
     Duplicate(DuplicateArgs),
 }
 

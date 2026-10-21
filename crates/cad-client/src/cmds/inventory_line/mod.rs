@@ -63,19 +63,19 @@ const DELETE_EXAMPLES: &[Example] = &[
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     /// List inventory lines using dynamic filters and sorting.
-    #[command(after_long_help = help::examples(LIST_EXAMPLES))]
+    #[command(after_help = help::examples(LIST_EXAMPLES))]
     List(list::Options),
     /// Get one inventory line.
-    #[command(after_long_help = help::examples(GET_EXAMPLES))]
+    #[command(after_help = help::examples(GET_EXAMPLES))]
     Get(IdArgs<InventoryLineId>),
     /// Create an inventory line from JSON input.
-    #[command(after_long_help = help::examples(CREATE_EXAMPLES))]
+    #[command(after_help = help::examples(CREATE_EXAMPLES))]
     Create(InputArgs),
     /// Partially update an inventory line from JSON input.
-    #[command(after_long_help = help::examples(PATCH_EXAMPLES))]
+    #[command(after_help = help::examples(PATCH_EXAMPLES))]
     Patch(IdInputArgs<InventoryLineId>),
     /// Delete an inventory line.
-    #[command(after_long_help = help::examples(DELETE_EXAMPLES))]
+    #[command(after_help = help::examples(DELETE_EXAMPLES))]
     Delete(IdArgs<InventoryLineId>),
 }
 

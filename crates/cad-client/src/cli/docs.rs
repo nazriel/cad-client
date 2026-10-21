@@ -286,9 +286,12 @@ fn cell(text: &str) -> String {
     text.replace('|', "\\|").replace('\n', " ")
 }
 
+/// The sections `--help` shows: the long variant when a command sets one,
+/// which is a superset of the short one.
 fn after_help_sections(command: &Command) -> Vec<help::Section> {
     command
         .get_after_long_help()
+        .or_else(|| command.get_after_help())
         .map(|help| help::parse(&help.to_string()))
         .unwrap_or_default()
 }

@@ -45,7 +45,7 @@ pub(crate) const UPDATE_AVAILABLE_STATUS: u8 = 10;
 /// Arguments of `cad-cli update`. Its help summary is the doc comment on
 /// [`crate::cmds::Command::Update`].
 #[derive(Debug, Args)]
-#[command(after_long_help = help::examples(EXAMPLES))]
+#[command(after_help = help::examples(EXAMPLES))]
 pub struct UpdateArgs {
     /// Only report whether a newer release exists: exit 10 if one does, 0 if
     /// this binary is up to date.

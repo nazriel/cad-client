@@ -50,16 +50,16 @@ const DELETE_EXAMPLES: &[Example] = &[
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     /// List activity groups for the selected company.
-    #[command(after_long_help = help::examples(LIST_EXAMPLES))]
+    #[command(after_help = help::examples(LIST_EXAMPLES))]
     List,
     /// Create an activity group from JSON --input <file|-> and return it.
-    #[command(after_long_help = help::examples(CREATE_EXAMPLES))]
+    #[command(after_help = help::examples(CREATE_EXAMPLES))]
     Create(InputArgs),
     /// Update an activity group from JSON --input <file|-> and return it.
-    #[command(after_long_help = help::examples(UPDATE_EXAMPLES))]
+    #[command(after_help = help::examples(UPDATE_EXAMPLES))]
     Update(IdInputArgs<ActivityGroupId>),
     /// Delete an activity group after confirmation.
-    #[command(after_long_help = help::examples(DELETE_EXAMPLES))]
+    #[command(after_help = help::examples(DELETE_EXAMPLES))]
     Delete(IdArgs<ActivityGroupId>),
 }
 

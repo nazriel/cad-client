@@ -107,28 +107,28 @@ const DUPLICATION_STATUS_EXAMPLES: &[Example] = &[Example::new(
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     /// List reporting periods.
-    #[command(after_long_help = help::examples(LIST_EXAMPLES))]
+    #[command(after_help = help::examples(LIST_EXAMPLES))]
     List,
     /// Get one reporting period.
-    #[command(after_long_help = help::examples(GET_EXAMPLES))]
+    #[command(after_help = help::examples(GET_EXAMPLES))]
     Get(ReportingPeriodIdArgs),
     /// Return aggregate information for one reporting period.
-    #[command(after_long_help = help::examples(DETAILS_EXAMPLES))]
+    #[command(after_help = help::examples(DETAILS_EXAMPLES))]
     Details(ReportingPeriodIdArgs),
     /// Create a reporting period from JSON --input <file|-> and return it.
-    #[command(after_long_help = help::examples(CREATE_EXAMPLES))]
+    #[command(after_help = help::examples(CREATE_EXAMPLES))]
     Create(InputArgs),
     /// Update a reporting period from JSON --input <file|-> and return it.
-    #[command(after_long_help = help::examples(UPDATE_EXAMPLES))]
+    #[command(after_help = help::examples(UPDATE_EXAMPLES))]
     Update(ReportingPeriodIdInputArgs),
     /// Delete a reporting period.
-    #[command(after_long_help = help::examples(DELETE_EXAMPLES))]
+    #[command(after_help = help::examples(DELETE_EXAMPLES))]
     Delete(ReportingPeriodIdArgs),
     /// Start a reporting-period duplication job from JSON --input <file|->.
-    #[command(after_long_help = help::examples(DUPLICATE_EXAMPLES))]
+    #[command(after_help = help::examples(DUPLICATE_EXAMPLES))]
     Duplicate(duplicate::Options),
     /// Inspect a duplication job.
-    #[command(after_long_help = help::examples(DUPLICATION_STATUS_EXAMPLES))]
+    #[command(after_help = help::examples(DUPLICATION_STATUS_EXAMPLES))]
     DuplicationStatus(IdArgs<DuplicationStatusId>),
 }
 

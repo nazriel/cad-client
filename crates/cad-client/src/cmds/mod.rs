@@ -96,10 +96,10 @@ pub enum Command {
     /// are simply not offered. Set `CAD_CLI_COMPLETE_OFFLINE=1` to use only the
     /// cache. Loading the script at shell startup keeps it in step with
     /// upgrades.
-    #[command(after_long_help = help::examples(COMPLETIONS_EXAMPLES))]
+    #[command(after_help = help::examples(COMPLETIONS_EXAMPLES))]
     Completions(generate::CompletionsArgs),
     /// Print the manual page in roff format.
-    #[command(after_long_help = help::examples(MAN_EXAMPLES))]
+    #[command(after_help = help::examples(MAN_EXAMPLES))]
     Man,
     /// Update cad-cli to the latest release.
     Update(update::UpdateArgs),
