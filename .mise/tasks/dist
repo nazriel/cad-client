@@ -16,6 +16,12 @@ for target in "${targets[@]}"; do
 done
 cargo build --release --locked -p cad-client --bin cad-cli "${target_args[@]}"
 
+# Linux builds link libdbus statically for the system keyring; its license
+# (AFL-2.1 or GPL-2.0-or-later, see deny.toml) travels with the binary.
+dbus_license="$(cargo metadata --format-version 1 --locked |
+  jq -r '.packages[] | select(.name == "libdbus-sys") | .manifest_path' |
+  xargs dirname)/vendor/dbus/COPYING"
+
 for target in "${targets[@]}"; do
   archive="cad-cli-v${version}-${target}"
   exe=""
@@ -23,6 +29,9 @@ for target in "${targets[@]}"; do
   rm -rf "dist/${archive}" "dist/${archive}".{tar.gz,zip}
   mkdir -p "dist/${archive}"
   cp "target/${target}/release/cad-cli${exe}" README.md LICENSE "dist/${archive}/"
+  if [[ "$target" == *-linux-* ]]; then
+    cp "$dbus_license" "dist/${archive}/LICENSE-dbus"
+  fi
   if [[ -n "$exe" ]]; then
     (cd dist && 7z a -tzip -bso0 -bsp0 "${archive}.zip" "${archive}")
     echo "dist/${archive}.zip"
