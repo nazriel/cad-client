@@ -13,7 +13,7 @@ use clap::{ArgMatches, FromArgMatches};
 use self::context::CommandContext;
 use self::platform::Platform;
 use crate::cli::args::LocalInputPath;
-use crate::cli::{Cli, command_with_help_header};
+use crate::cli::{Cli, OutputFormat, command_with_help_header};
 use crate::cmds::Invocation;
 use crate::config::{AppConfig, Environment, ProcessEnvironment};
 use crate::error::CliError;
@@ -39,7 +39,7 @@ where
 
     let terminal = ProcessTerminal;
     match execute(cli, &matches, &ProcessEnvironment, &terminal).await {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(status) => ExitCode::from(status),
         Err(error) => {
             let _ = terminal.status(StatusKind::Error, &error.to_string());
             error.exit_code()
@@ -47,18 +47,34 @@ where
     }
 }
 
+/// Runs the parsed command and returns the process exit status.
 async fn execute(
     cli: Cli,
     matches: &ArgMatches,
     environment: &impl Environment,
     terminal: &dyn Terminal,
-) -> Result<(), CliError> {
+) -> Result<u8, CliError> {
     let output = cli.global.output;
     let command_context = CommandContext::new(terminal, cli.global.yes);
     // Artefacts generated from the command definition need no server and no
     // credentials, so they are dispatched before configuration is even resolved.
     let online = match cli.command.into_invocation() {
-        Invocation::Offline(command) => return command.run(terminal),
+        Invocation::Offline(command) => return command.run(terminal).map(|()| 0),
+        Invocation::Standalone(command) => {
+            let report = command
+                .run(&command_context, environment, cli.global.request_timeout)
+                .await?;
+            terminal.write_output(&report.value, output)?;
+            terminal.status(report.status, &report.summary)?;
+            // Reading matter is for the table view; a caller asking for JSON
+            // is a program and gets the data alone.
+            if output == OutputFormat::Table
+                && let Some(notes) = &report.notes
+            {
+                terminal.notes(&notes.heading, &notes.body)?;
+            }
+            return Ok(report.exit_status);
+        }
         Invocation::Online(online) => online,
     };
 
@@ -76,7 +92,8 @@ async fn execute(
     // that the command finished rather than guessing from an empty result.
     terminal.write_output(&result, output)?;
     let (kind, summary) = completion_summary(&result);
-    terminal.status(kind, &summary)
+    terminal.status(kind, &summary)?;
+    Ok(0)
 }
 
 /// Short confirmation written to stderr once the data has been emitted.

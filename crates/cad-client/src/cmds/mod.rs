@@ -15,6 +15,9 @@ pub mod organizational_unit;
 pub mod report;
 pub mod reporting_period;
 pub mod schema;
+pub mod update;
+
+use std::time::Duration;
 
 use clap::Subcommand;
 use serde_json::Value;
@@ -22,6 +25,7 @@ use serde_json::Value;
 use crate::app::context::CommandContext;
 use crate::app::platform::Platform;
 use crate::cli::help::{self, Example};
+use crate::config::Environment;
 use crate::error::CliError;
 use crate::support::terminal::Terminal;
 
@@ -82,6 +86,8 @@ pub enum Command {
     /// Print the manual page in roff format.
     #[command(after_long_help = help::examples(MAN_EXAMPLES))]
     Man,
+    /// Update cad-cli to the latest release.
+    Update(update::UpdateArgs),
 }
 
 impl Command {
@@ -111,6 +117,7 @@ impl Command {
             Self::Schema(group) => Invocation::Offline(OfflineCommand::Schema(group)),
             Self::Completions(args) => Invocation::Offline(OfflineCommand::Completions(args)),
             Self::Man => Invocation::Offline(OfflineCommand::Man),
+            Self::Update(args) => Invocation::Standalone(StandaloneCommand::Update(args)),
         }
     }
 }
@@ -123,7 +130,27 @@ impl Command {
 pub(crate) enum Invocation {
     /// Runs without a server, credentials, or any local input file.
     Offline(OfflineCommand),
+    /// Needs neither the platform nor its configuration, but returns data in
+    /// the selected output format like an online command.
+    Standalone(StandaloneCommand),
     Online(OnlineCommand),
+}
+
+pub(crate) enum StandaloneCommand {
+    Update(update::UpdateArgs),
+}
+
+impl StandaloneCommand {
+    pub(crate) async fn run(
+        self,
+        context: &CommandContext<'_>,
+        environment: &impl Environment,
+        request_timeout: Duration,
+    ) -> Result<update::Report, CliError> {
+        match self {
+            Self::Update(args) => args.run(context, environment, request_timeout).await,
+        }
+    }
 }
 
 pub(crate) enum OfflineCommand {

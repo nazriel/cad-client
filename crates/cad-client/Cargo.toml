@@ -24,17 +24,33 @@ clap_mangen.workspace = true
 # runtime dependency diet.
 comfy-table.workspace = true
 console.workspace = true
+# `cad-cli update` fetches release archives from GitHub, which is not the
+# platform, so this crate makes those requests itself. flate2 inflates both
+# archive formats.
+flate2.workspace = true
 humantime.workspace = true
 indicatif.workspace = true
+reqwest.workspace = true
+ring.workspace = true
 schemars.workspace = true
+self-replace.workspace = true
+semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 tracing-subscriber.workspace = true
 unicode-width.workspace = true
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "time"] }
+tokio = { workspace = true, features = ["macros", "process", "rt-multi-thread", "signal", "time"] }
 uuid.workspace = true
+
+# Release archives are .tar.gz everywhere except Windows, which ships .zip;
+# each build links only the reader for its own format.
+[target.'cfg(not(windows))'.dependencies]
+tar.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+zip.workspace = true
 
 [dev-dependencies]
 assert_cmd.workspace = true

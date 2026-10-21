@@ -51,6 +51,8 @@ fn credentials() -> FakeEnvironment {
 struct FakeTerminal {
     stdout: Mutex<Vec<u8>>,
     status: Mutex<Vec<(StatusKind, String)>>,
+    /// Headings of the notes blocks written.
+    notes: Mutex<Vec<String>>,
     progress: Mutex<Vec<String>>,
     confirmations: Mutex<Vec<String>>,
     interactive: bool,
@@ -85,6 +87,14 @@ impl Terminal for FakeTerminal {
             .lock()
             .expect("status lock")
             .push((kind, message.to_owned()));
+        Ok(())
+    }
+
+    fn notes(&self, heading: &str, _body: &str) -> Result<(), CliError> {
+        self.notes
+            .lock()
+            .expect("notes lock")
+            .push(heading.to_owned());
         Ok(())
     }
 
@@ -169,6 +179,17 @@ async fn run_cli(
     environment: &FakeEnvironment,
     terminal: &FakeTerminal,
 ) -> Result<(), CliError> {
+    run_cli_status(arguments, environment, terminal)
+        .await
+        .map(|status| assert_eq!(status, 0, "a platform command exits 0"))
+}
+
+/// Like [`run_cli`], for commands whose successful exit status varies.
+async fn run_cli_status(
+    arguments: &[&str],
+    environment: &FakeEnvironment,
+    terminal: &FakeTerminal,
+) -> Result<u8, CliError> {
     let matches = Cli::command()
         .try_get_matches_from(arguments)
         .expect("arguments parse");
@@ -1044,4 +1065,44 @@ async fn unreadable_input_fails_before_the_identity_request() {
     // instead of producing this error.
     assert!(matches!(error, CliError::Input(_)));
     assert!(error.to_string().contains("definitely-missing.json"));
+}
+
+#[tokio::test]
+async fn update_check_needs_no_platform_configuration_and_renders_its_result() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/releases/latest"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "tag_name": "v99.0.0",
+            "assets": [],
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    // Deliberately no CAD credentials or server: `update` must not resolve them.
+    let environment = FakeEnvironment(HashMap::from([(
+        crate::exec::update::URL_VARIABLE.to_owned(),
+        format!("{}/releases/latest", server.uri()),
+    )]));
+    let terminal = FakeTerminal::default();
+
+    let status = run_cli_status(
+        &["cad-cli", "--output", "json", "update", "--check"],
+        &environment,
+        &terminal,
+    )
+    .await
+    .expect("the check succeeds");
+
+    assert_eq!(status, crate::cmds::update::UPDATE_AVAILABLE_STATUS);
+    let stdout: serde_json::Value =
+        serde_json::from_str(&terminal.stdout()).expect("stdout is JSON");
+    assert_eq!(stdout["latest"], "99.0.0");
+    assert_eq!(stdout["current"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(stdout["updateAvailable"], true);
+    assert_eq!(stdout["updated"], false);
+    let statuses = terminal.statuses();
+    assert_eq!(statuses.len(), 1);
+    assert_eq!(statuses[0].0, StatusKind::Info);
+    assert!(statuses[0].1.starts_with("cad-cli 99.0.0 is available"));
 }

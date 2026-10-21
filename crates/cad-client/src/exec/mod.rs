@@ -9,6 +9,7 @@ pub(crate) mod reporting_periods;
 pub(crate) mod reports;
 #[cfg(test)]
 mod tests;
+pub(crate) mod update;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct WaitOptions {
