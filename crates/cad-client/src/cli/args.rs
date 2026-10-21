@@ -22,7 +22,7 @@ pub struct GlobalArgs {
     pub environment: Option<EnvironmentName>,
 
     /// Use another accessible company instead of the company from the API-key token.
-    #[arg(long, global = true)]
+    #[arg(long, global = true, add = crate::completion::company_ids())]
     pub company_id: Option<CompanyId>,
 
     /// Permit HTTP for localhost/loopback mock servers.

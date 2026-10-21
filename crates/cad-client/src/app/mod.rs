@@ -26,6 +26,11 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
+    let args: Vec<OsString> = args.into_iter().map(Into::into).collect();
+    // A shell asking for candidates is answered before anything else runs.
+    if let Some(code) = crate::completion::try_complete(&args) {
+        return code;
+    }
     let parsed = command_with_help_header()
         .try_get_matches_from(args)
         .and_then(|matches| Cli::from_arg_matches(&matches).map(|cli| (cli, matches)));

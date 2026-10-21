@@ -13,7 +13,9 @@ assert_cmd = "2.2.2"
 base64 = "0.23.1"
 chrono = { version = "0.4.42", features = ["serde"] }
 clap = { version = "4.5.48", features = ["derive", "wrap_help"] }
-clap_complete = "4.6.9"
+# `unstable-dynamic` provides `CompleteEnv` and `ArgValueCompleter`: shell
+# completion that asks the binary for candidates, including IDs from the API.
+clap_complete = { version = "4.6.9", features = ["unstable-dynamic"] }
 clap_mangen = "0.3.3"
 comfy-table = "8.0.0"
 console = "0.16.4"

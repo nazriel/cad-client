@@ -1,8 +1,8 @@
 //! Artefacts generated from the command definition itself.
 //!
-//! Both outputs are derived from [`crate::cli::Cli`], so a new flag or command
-//! shows up in the completions and the man page without a second definition to
-//! keep in sync.
+//! The man page is derived from [`crate::cli::Cli`], and shell completion asks
+//! the binary for candidates at Tab time, so a new flag or command shows up in
+//! both without a second definition to keep in sync.
 
 use clap::{Args, CommandFactory};
 use clap_complete::Shell;
@@ -16,15 +16,20 @@ const BINARY: &str = "cad-cli";
 
 #[derive(Debug, Args)]
 pub struct CompletionsArgs {
-    /// Shell to generate a completion script for.
+    /// Shell to print the completion registration for.
     #[arg(value_enum)]
     pub(crate) shell: Shell,
 }
 
 impl CompletionsArgs {
+    /// Prints the dynamic registration, identical to `COMPLETE=<shell> cad-cli`.
+    ///
+    /// Printing the registration rather than a static script means that every
+    /// way of installing completions, sourced or written to a file, also gets
+    /// the platform-backed candidates.
     pub(crate) fn run(self, terminal: &dyn Terminal) -> Result<(), CliError> {
         let mut buffer = Vec::new();
-        clap_complete::generate(self.shell, &mut Cli::command(), BINARY, &mut buffer);
+        crate::completion::write_registration(self.shell, &mut buffer).map_err(CliError::Io)?;
         terminal.write_bytes(&buffer)
     }
 }

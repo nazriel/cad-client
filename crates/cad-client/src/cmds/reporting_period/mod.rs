@@ -12,7 +12,7 @@ use serde_json::{Map, Value, json};
 
 use crate::adapters::sdk::SdkAdapter;
 use crate::app::context::CommandContext;
-use crate::cli::args::{IdArgs, IdInputArgs, InputArgs};
+use crate::cli::args::{IdArgs, InputArgs};
 use crate::cli::help::{self, Example};
 use crate::error::CliError;
 use crate::output::to_value;
@@ -22,6 +22,24 @@ use crate::output::to_value;
 pub struct Group {
     #[command(subcommand)]
     pub(crate) command: Command,
+}
+
+/// A reporting-period ID positional that the shell completes from the
+/// periods of the selected company.
+#[derive(Debug, Args)]
+pub(crate) struct ReportingPeriodIdArgs {
+    /// Identifier of the reporting period.
+    #[arg(add = crate::completion::reporting_period_ids())]
+    pub(crate) id: ReportingPeriodId,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ReportingPeriodIdInputArgs {
+    #[command(flatten)]
+    pub(crate) period: ReportingPeriodIdArgs,
+
+    #[command(flatten)]
+    pub(crate) input: InputArgs,
 }
 
 const LIST_EXAMPLES: &[Example] = &[
@@ -93,19 +111,19 @@ pub(crate) enum Command {
     List,
     /// Get one reporting period.
     #[command(after_long_help = help::examples(GET_EXAMPLES))]
-    Get(IdArgs<ReportingPeriodId>),
+    Get(ReportingPeriodIdArgs),
     /// Return aggregate information for one reporting period.
     #[command(after_long_help = help::examples(DETAILS_EXAMPLES))]
-    Details(IdArgs<ReportingPeriodId>),
+    Details(ReportingPeriodIdArgs),
     /// Create a reporting period from JSON --input <file|-> and return it.
     #[command(after_long_help = help::examples(CREATE_EXAMPLES))]
     Create(InputArgs),
     /// Update a reporting period from JSON --input <file|-> and return it.
     #[command(after_long_help = help::examples(UPDATE_EXAMPLES))]
-    Update(IdInputArgs<ReportingPeriodId>),
+    Update(ReportingPeriodIdInputArgs),
     /// Delete a reporting period.
     #[command(after_long_help = help::examples(DELETE_EXAMPLES))]
-    Delete(IdArgs<ReportingPeriodId>),
+    Delete(ReportingPeriodIdArgs),
     /// Start a reporting-period duplication job from JSON --input <file|->.
     #[command(after_long_help = help::examples(DUPLICATE_EXAMPLES))]
     Duplicate(duplicate::Options),
@@ -279,7 +297,7 @@ impl Group {
             }
             Command::Update(args) => {
                 let input: ReportingPeriodReplacement = context.read_json(&args.input.input)?;
-                let period = reporting_periods.replace(args.id, &input).await?;
+                let period = reporting_periods.replace(args.period.id, &input).await?;
                 to_value(period)
             }
             Command::Delete(args) => {
