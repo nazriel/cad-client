@@ -91,6 +91,18 @@ pub enum Command {
 }
 
 impl Command {
+    /// Whether the background check for a newer release may run alongside
+    /// this command.
+    ///
+    /// The generated artefacts are redirected into files and must stay
+    /// byte-for-byte reproducible, and `update` reports on releases itself.
+    pub(crate) const fn checks_for_updates(&self) -> bool {
+        !matches!(
+            self,
+            Self::Schema(_) | Self::Completions(_) | Self::Man | Self::Update(_)
+        )
+    }
+
     pub(crate) fn into_invocation(self) -> Invocation {
         match self {
             Self::ActivityCategory(group) => {

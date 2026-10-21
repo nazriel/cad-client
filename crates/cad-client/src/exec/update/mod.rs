@@ -14,6 +14,7 @@
 pub(crate) mod archive;
 pub(crate) mod install;
 pub(crate) mod notes;
+pub(crate) mod notice;
 pub(crate) mod target;
 /// Also the home of the release fixtures the `update` command's tests share.
 #[cfg(test)]

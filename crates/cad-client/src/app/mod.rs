@@ -5,6 +5,7 @@ pub(crate) mod platform;
 mod tests;
 
 use std::ffi::OsString;
+use std::io::IsTerminal;
 use std::process::ExitCode;
 
 use cad_api::Client;
@@ -17,6 +18,7 @@ use crate::cli::{Cli, OutputFormat, command_with_help_header};
 use crate::cmds::Invocation;
 use crate::config::{AppConfig, Environment, ProcessEnvironment};
 use crate::error::CliError;
+use crate::exec::update::notice::{self, BackgroundCheck};
 use crate::support::terminal::{ProcessTerminal, StatusKind, Terminal};
 
 /// Parses the supplied process arguments and executes the application.
@@ -38,13 +40,32 @@ where
     };
 
     let terminal = ProcessTerminal;
-    match execute(cli, &matches, &ProcessEnvironment, &terminal).await {
+    let environment = ProcessEnvironment;
+    // Started before the command so it runs alongside it; read afterwards only
+    // if it has already finished.
+    let update_check = (cli.command.checks_for_updates()
+        && notice::enabled(
+            &environment,
+            cli.global.output,
+            std::io::stderr().is_terminal(),
+        ))
+    .then(|| BackgroundCheck::start(&environment))
+    .flatten();
+
+    let code = match execute(cli, &matches, &environment, &terminal).await {
         Ok(status) => ExitCode::from(status),
         Err(error) => {
             let _ = terminal.status(StatusKind::Error, &error.to_string());
             error.exit_code()
         }
+    };
+
+    if let Some(check) = update_check
+        && let Some(message) = check.finish().await
+    {
+        let _ = terminal.status(StatusKind::Info, &message);
     }
+    code
 }
 
 /// Runs the parsed command and returns the process exit status.

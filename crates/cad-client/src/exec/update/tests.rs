@@ -1,10 +1,11 @@
-//! Updater contract tests: versions, targets, checksums, archives and the URL
-//! policy.
+//! Updater contract tests: versions, targets, checksums, archives, URL policy,
+//! the daily throttle and the conditions that silence the notice.
 //!
 //! The release fixtures are shared with the `update` command's tests.
 
 use std::collections::HashMap;
-use std::time::Duration;
+use std::path::Path;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use semver::Version;
 use serde_json::json;
@@ -12,8 +13,12 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use super::archive::{self, expected_digest, sha256_hex};
+use super::notice::{
+    self, BackgroundCheck, CHECK_INTERVAL, DISABLE_VARIABLE, RETRY_INTERVAL, State,
+};
 use super::target::{ArchiveFormat, Target};
 use super::{ReleaseSource, URL_VARIABLE, available_message, parse_tag, permitted};
+use crate::cli::OutputFormat;
 use crate::config::Environment;
 use crate::error::CliError;
 
@@ -780,4 +785,265 @@ async fn a_tampered_archive_is_rejected_before_extraction() {
         matches!(&error, CliError::Update(message) if message.contains("checksum mismatch")),
         "{error}"
     );
+}
+
+// Throttle
+
+async fn mount_latest_tag(server: &MockServer, tag: &str, expected_requests: u64) {
+    Mock::given(method("GET"))
+        .and(path("/releases/latest"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "tag_name": tag,
+            "assets": [],
+        })))
+        .expect(expected_requests)
+        .mount(server)
+        .await;
+}
+
+/// The state after a check answered at `seconds`.
+fn state_at(seconds: u64) -> State {
+    State {
+        checked_at: Some(seconds),
+        attempted_at: Some(seconds),
+        latest: Some("0.2.0".to_owned()),
+    }
+}
+
+fn at(seconds: u64) -> SystemTime {
+    UNIX_EPOCH + Duration::from_secs(seconds)
+}
+
+#[test]
+fn a_check_is_due_once_a_day() {
+    let day = CHECK_INTERVAL.as_secs();
+    let checked = 1_800_000_000;
+    assert!(notice::due(None, at(checked)));
+    assert!(!notice::due(Some(&state_at(checked)), at(checked)));
+    assert!(!notice::due(
+        Some(&state_at(checked)),
+        at(checked + day - 1)
+    ));
+    assert!(notice::due(Some(&state_at(checked)), at(checked + day)));
+    // A clock that went backwards does not suppress checks until it catches up.
+    assert!(notice::due(Some(&state_at(checked)), at(checked - 60)));
+}
+
+#[test]
+fn an_unanswered_check_is_retried_after_an_hour() {
+    let hour = RETRY_INTERVAL.as_secs();
+    let attempted = 1_800_000_000;
+    let unanswered = State {
+        checked_at: Some(attempted - CHECK_INTERVAL.as_secs()),
+        attempted_at: Some(attempted),
+        latest: Some("0.2.0".to_owned()),
+    };
+    assert!(!notice::due(Some(&unanswered), at(attempted + hour - 1)));
+    assert!(notice::due(Some(&unanswered), at(attempted + hour)));
+
+    let never_answered = State {
+        checked_at: None,
+        ..unanswered
+    };
+    assert!(!notice::due(Some(&never_answered), at(attempted)));
+    assert!(notice::due(Some(&never_answered), at(attempted + hour)));
+}
+
+#[test]
+fn a_state_file_from_before_retries_still_reads() {
+    let state: State =
+        serde_json::from_str(r#"{"checkedAt":1800000000,"latest":"0.2.0"}"#).expect("parses");
+    assert_eq!(state.checked_at, Some(1_800_000_000));
+    assert_eq!(state.attempted_at, None);
+}
+
+#[tokio::test]
+async fn the_network_is_asked_at_most_once_a_day() {
+    let server = MockServer::start().await;
+    mount_latest_tag(&server, "v0.2.0", 2).await;
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let state = directory.path().join("cad-cli").join("update-check.json");
+    let source = source(&server);
+    let start = 1_800_000_000;
+    let day = CHECK_INTERVAL.as_secs();
+
+    let first = notice::latest_known(&state, &source, at(start)).await;
+    assert_eq!(first, Some(version("0.2.0")));
+    assert_eq!(notice::read_state(&state), Some(state_at(start)));
+
+    // Within the day the answer comes from the state file.
+    let cached = notice::latest_known(&state, &source, at(start + day / 2)).await;
+    assert_eq!(cached, Some(version("0.2.0")));
+
+    let next_day = notice::latest_known(&state, &source, at(start + day)).await;
+    assert_eq!(next_day, Some(version("0.2.0")));
+    // `expect(2)` is verified when the server drops.
+}
+
+#[tokio::test]
+async fn a_failed_check_is_silent_and_retried_after_an_hour() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/releases/latest"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(2)
+        .mount(&server)
+        .await;
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let state = directory.path().join("update-check.json");
+    notice::write_state(&state, &state_at(0)).expect("writable");
+    let source = source(&server);
+    let now = 1_800_000_000;
+
+    // The previous answer survives a failed check.
+    let failed = notice::latest_known(&state, &source, at(now)).await;
+    assert_eq!(failed, Some(version("0.2.0")));
+    assert_eq!(
+        notice::read_state(&state),
+        Some(State {
+            attempted_at: Some(now),
+            ..state_at(0)
+        })
+    );
+
+    // Within the hour no request is made; after it, one is.
+    let later = notice::latest_known(&state, &source, at(now + 60)).await;
+    assert_eq!(later, Some(version("0.2.0")));
+    let retried = notice::latest_known(&state, &source, at(now + RETRY_INTERVAL.as_secs())).await;
+    assert_eq!(retried, Some(version("0.2.0")));
+    // `expect(2)` is verified when the server drops.
+}
+
+#[tokio::test]
+async fn without_a_writable_state_file_the_network_is_not_asked() {
+    let server = MockServer::start().await;
+    mount_latest_tag(&server, "v0.2.0", 0).await;
+    let blocker = tempfile::NamedTempFile::new().expect("temporary file");
+    // A regular file where the cache directory should be.
+    let state = blocker.path().join("cad-cli").join("update-check.json");
+
+    let latest = notice::latest_known(&state, &source(&server), SystemTime::now()).await;
+    assert_eq!(latest, None);
+}
+
+#[tokio::test]
+async fn a_finished_background_check_yields_the_notice() {
+    let server = MockServer::start().await;
+    mount_latest_tag(&server, "v99.0.0", 1).await;
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let check = BackgroundCheck::start(&cache_environment(&server, directory.path()))
+        .expect("the check starts");
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while !check.is_finished() && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let message = check.finish().await.expect("a newer release is reported");
+    assert!(message.starts_with("cad-cli 99.0.0 is available (current "));
+    assert!(message.ends_with("); run: cad-cli update"));
+}
+
+#[tokio::test]
+async fn an_unfinished_background_check_is_abandoned() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/releases/latest"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"tag_name": "v99.0.0", "assets": []}))
+                .set_delay(Duration::from_secs(2)),
+        )
+        .mount(&server)
+        .await;
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let check = BackgroundCheck::start(&cache_environment(&server, directory.path()))
+        .expect("the check starts");
+
+    let started = std::time::Instant::now();
+    assert_eq!(check.finish().await, None);
+    assert!(started.elapsed() < Duration::from_secs(1), "finish waited");
+}
+
+/// Points every platform's cache directory, and the release source, at test
+/// fixtures.
+fn cache_environment(server: &MockServer, cache: &Path) -> FakeEnvironment {
+    let url = format!("{}/releases/latest", server.uri());
+    let cache = cache.to_str().expect("UTF-8 temporary path");
+    environment([
+        (URL_VARIABLE, url.as_str()),
+        ("HOME", cache),
+        ("XDG_CACHE_HOME", cache),
+        ("LOCALAPPDATA", cache),
+    ])
+}
+
+// Where the state lives and when the notice is off
+
+#[test]
+fn the_state_file_lives_in_the_platform_cache_directory() {
+    let base = std::env::temp_dir();
+    let base_str = base.to_str().expect("UTF-8 temporary path");
+    let suffix = Path::new("cad-cli").join("update-check.json");
+
+    let linux = environment([("XDG_CACHE_HOME", base_str), ("HOME", "/unused")]);
+    assert_eq!(
+        notice::state_path(&linux, "linux"),
+        Some(base.join(&suffix))
+    );
+    let linux_default = environment([("XDG_CACHE_HOME", "relative"), ("HOME", base_str)]);
+    assert_eq!(
+        notice::state_path(&linux_default, "linux"),
+        Some(base.join(".cache").join(&suffix))
+    );
+    let macos = environment([("HOME", base_str)]);
+    assert_eq!(
+        notice::state_path(&macos, "macos"),
+        Some(base.join("Library").join("Caches").join(&suffix))
+    );
+    let windows = environment([("LOCALAPPDATA", base_str)]);
+    assert_eq!(
+        notice::state_path(&windows, "windows"),
+        Some(base.join(&suffix))
+    );
+    assert_eq!(notice::state_path(&environment([]), "linux"), None);
+}
+
+#[test]
+fn the_notice_is_only_for_a_person_at_a_terminal() {
+    let quiet = environment([]);
+    assert!(notice::enabled(&quiet, OutputFormat::Table, true));
+    assert!(!notice::enabled(&quiet, OutputFormat::Table, false));
+    assert!(!notice::enabled(&quiet, OutputFormat::Json, true));
+    assert!(!notice::enabled(&quiet, OutputFormat::Jsonl, true));
+    assert!(!notice::enabled(
+        &environment([("CI", "true")]),
+        OutputFormat::Table,
+        true
+    ));
+    assert!(!notice::enabled(
+        &environment([(DISABLE_VARIABLE, "1")]),
+        OutputFormat::Table,
+        true
+    ));
+    // An empty or false variable is treated as unset.
+    for off in ["", "0", "false", "FALSE", "no", "Off", " off "] {
+        assert!(
+            notice::enabled(
+                &environment([("CI", off), (DISABLE_VARIABLE, off)]),
+                OutputFormat::Table,
+                true
+            ),
+            "{off:?}"
+        );
+    }
+}
+
+#[test]
+fn flag_variables_are_false_only_for_empty_and_false_words() {
+    for on in ["1", "true", "TRUE", "yes", "On", "2", "disable", "y"] {
+        assert!(notice::is_true(on), "{on:?}");
+    }
+    for off in ["", "  ", "0", "false", "False", "no", "NO", "off", " 0 "] {
+        assert!(!notice::is_true(off), "{off:?}");
+    }
 }

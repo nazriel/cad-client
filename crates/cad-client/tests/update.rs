@@ -1,5 +1,5 @@
-//! Black-box coverage of `cad-cli update` against a fake GitHub release
-//! served from loopback.
+//! Black-box coverage of `cad-cli update` and the background release check,
+//! against a fake GitHub release served from loopback.
 
 use std::path::Path;
 
@@ -116,6 +116,36 @@ async fn an_unreachable_release_server_is_a_transport_failure() {
         .await
         .code(5)
         .stdout(predicate::str::is_empty());
+}
+
+#[tokio::test]
+async fn the_background_check_stays_off_when_stderr_is_not_a_terminal() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(LATEST_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "tag_name": "v99.0.0",
+            "assets": [],
+        })))
+        .expect(0)
+        .mount(&server)
+        .await;
+    let cache = tempfile::tempdir().expect("temporary directory");
+    let mut command = cad_cli(&built_binary(), &server, cache.path());
+    // Fails on missing credentials, after the point the check would start.
+    command.args(["context", "show"]);
+
+    run(command)
+        .await
+        .code(2)
+        .stderr(predicate::str::contains("is available").not());
+    assert!(
+        std::fs::read_dir(cache.path())
+            .expect("readable")
+            .next()
+            .is_none(),
+        "no state file is written"
+    );
 }
 
 /// Full updates replace a copy of the built binary, never the binary itself.

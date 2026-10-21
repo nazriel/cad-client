@@ -38,6 +38,21 @@ fn check_and_force_parse_but_exclude_each_other() {
     parse(&["cad-cli", "update", "--check", "--force"]).expect_err("conflicting flags");
 }
 
+#[test]
+fn generated_artefacts_and_update_itself_skip_the_background_check() {
+    for arguments in [
+        &["cad-cli", "update"][..],
+        &["cad-cli", "schema", "list"],
+        &["cad-cli", "completions", "bash"],
+        &["cad-cli", "man"],
+    ] {
+        let cli = parse(arguments).expect("arguments parse");
+        assert!(!cli.command.checks_for_updates(), "{arguments:?}");
+    }
+    let cli = parse(&["cad-cli", "company", "list"]).expect("arguments parse");
+    assert!(cli.command.checks_for_updates());
+}
+
 /// Records what the fake install step was given: the binary's bytes and the
 /// version it was asked to install.
 #[derive(Default)]
