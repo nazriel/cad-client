@@ -73,6 +73,43 @@ an online command. Its release notes are reading matter, not data: they go to
 stderr through `Terminal::notes`, only with table output and only at a
 terminal.
 
+### Where credentials live
+
+`cad-cli auth login` stores an API key for one server origin, and every other
+command finds it again; the whole of that lives in `cad-client`:
+
+```text
+crates/cad-client/src/support/credentials/
+├── mod.rs              # the stored entry, the store, origin keying
+├── resolve.rs          # environment > keyring > file
+├── system_keyring.rs   # the OS keyring, each call on its own thread
+├── file.rs             # credentials.json: 0600 file in a 0700 directory
+├── memory.rs           # in-memory keyring double (tests only)
+└── tests.rs
+crates/cad-client/src/support/config_dir.rs   # the per-user configuration directory
+crates/cad-client/src/cmds/auth/              # login, status, logout
+```
+
+`cad-api` does not know where credentials are kept. It owns what a credential
+is (`ApiKeyV2Credentials`), how its two halves are written and checked
+(`parse_key_id`, `parse_secret`, `parse_token`) and how it authenticates; where
+the Key ID and Secret come from, and how they are kept between runs, is a
+property of the application. A library consumer therefore decides that for
+itself, and the SDK stays free of keyring, file and prompt dependencies.
+
+The stored value is JSON tagged by `kind` (`apiKey` today), so another kind of
+credential can be added without a new layout; an entry of a kind this version
+does not know is an error naming the kind and the origin, never ignored. The
+secret is a `SecretString` from the moment it is read until the bearer token is
+built. `auth` is its own invocation in `cmds/mod.rs`: `login` must not resolve
+stored credentials first, and `logout` never connects. Keyring calls block, so
+each runs on a short-lived thread of its own and never on a thread of the
+application's runtime. The keyring is `keyring-core` with one store per
+platform (Keychain, Credential Manager, and on other Unix systems the Secret
+Service through libdbus, vendored so that static musl builds need no system
+library); the workspace `Cargo.toml` says why that is not the pure-Rust zbus
+store.
+
 ## Platform routes and OpenAPI
 
 `openapi/openapi_current.json` is the current development contract. Inspect it

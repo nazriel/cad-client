@@ -10,6 +10,7 @@ cad-cli [OPTIONS] <COMMAND>
 
 | Command | Description |
 |---|---|
+| [`auth`](auth.md) | Log in to a server with an API key, check the login and log out |
 | [`activity-category`](activity-category.md) | Manage the company's activity categories |
 | [`activity-group`](activity-group.md) | Manage the company's activity groups |
 | [`benchmark`](benchmark.md) | Read and update the company benchmark |
@@ -46,11 +47,12 @@ Every command accepts these options.
 
 | Variable | Description |
 |---|---|
-| `CAD_API_KEY` | Machine API key ID (a UUID). Required by every command that calls the platform. |
-| `CAD_API_SECRET` | Secret of the machine API key. Required by every command that calls the platform. |
+| `CAD_API_KEY` | Machine API key ID (a UUID). When it or CAD_API_SECRET is set, the environment alone decides which key commands use; otherwise they use the login `cad-cli auth login` stored. |
+| `CAD_API_SECRET` | Secret of the machine API key. Used with CAD_API_KEY, and instead of a stored login. |
 | `CAD_SERVER_URL` | Exact application origin. Overrides --environment and CAD_ENV, but not --server-url. |
 | `CAD_ENV` | Origin preset when no origin is given: production (prod) or staging (stage). |
 | `CAD_COMPANY_ID` | Accessible company to act on when --company-id is not given. |
+| `CAD_CLI_KEYRING` | Set to 0 (or false, no, off) to never use the system keyring: `cad-cli auth login` then keeps the key in the credentials file only. For machines without a keyring. |
 | `CAD_CLI_COMPLETE_OFFLINE` | Set to 1 to make shell completion answer from its cache only, without platform requests. |
 | `RUST_LOG` | Diagnostic logging on stderr; cad_api=debug logs one line per platform request. |
 | `NO_COLOR` | Disable colour in tables and status messages. |

@@ -109,14 +109,87 @@ Windows.
 
 ## Configure
 
-Credentials are read only from the environment. Every platform request uses
-`Authorization: Bearer <CAD_API_KEY>.<CAD_API_SECRET>`:
+Every platform request uses `Authorization: Bearer <Key ID>.<Secret>`, the
+API key you create on the platform's API keys page
+(`<server>/app/user-account-settings/api-keys`). Pick a server first: with
+`--environment staging` or `--environment production`, with `--server-url`, or
+with `CAD_SERVER_URL` or `CAD_ENV`.
+
+### Log in
+
+```console
+cad-cli --environment staging auth login
+```
+
+`auth login` prints the API keys page and opens it in your browser. The page
+shows the **Key ID** (a UUID) and the **Secret** (`cad_aks_` followed by 43
+letters, digits, `-` or `_`) as two values; paste each when asked. The Secret is
+not echoed. The key is checked with the server before anything is saved, and a
+rejected key is not stored. Create the key on the page first: it cannot be
+created from the command line.
+
+- `--no-browser` only prints the page address.
+- `--with-token` reads `<Key ID>.<Secret>` from standard input instead of
+  asking, for scripts and machines without a terminal:
+  `printf '%s.%s' "$KEY_ID" "$SECRET" | cad-cli --environment staging auth login --with-token`.
+- `cad-cli auth status` shows which credentials commands use for the selected
+  server and checks them with the server.
+- `cad-cli auth logout` forgets the key stored for the selected server. The key
+  itself stays valid until you revoke it on the API keys page.
+
+A login belongs to one server origin (`scheme://host[:port]`): a key stored for
+`https://staging.carbonaltdelete.eu` is never sent to another host, nor to
+another port of the same host. `auth status` and `auth logout` act on the
+selected server only.
+
+### Where the login is kept
+
+| Where | Used when |
+|---|---|
+| The system keyring: macOS Keychain, Windows Credential Manager, or the Secret Service (GNOME Keyring, KWallet) on Linux | It works. This is tried first. |
+| A file, `cad-cli/credentials.json` in the user configuration directory | The keyring cannot be used and you agree to the file. |
+
+The configuration directory is `$XDG_CONFIG_HOME` when it is set to an absolute
+path, else `~/.config` on Linux, `~/Library/Application Support` on macOS and
+`%APPDATA%` on Windows. On Unix the directory is created readable only by you
+(`0700`) and the file is written `0600`; a file that anyone else can read is
+refused, and the error gives the `chmod 600` command that fixes it. The file
+holds the Key ID and the Secret as plain text, which is why the keyring is
+preferred.
+
+When the keyring cannot be used (no Secret Service is running, it is locked, or
+this is a headless machine), `auth login` says why and asks
+`Store the credentials in <path> instead, readable only by you? (y/N)`. `--yes`
+does not answer it. Without a terminal it stops with exit status 2 and stores
+nothing, unless you pass `--insecure-storage`, which skips the keyring and
+writes the file. One origin has one stored login: saving it in one place removes
+it from the other.
+
+Set `CAD_CLI_KEYRING=0` (also `false`, `no` or `off`) to never touch the system
+keyring and use only the file, for example on a server without a desktop
+session.
+
+### Environment variables
+
+`CAD_API_KEY` and `CAD_API_SECRET` still work, and take precedence:
 
 ```console
 export CAD_SERVER_URL=https://staging.carbonaltdelete.eu
 export CAD_API_KEY=00000000-0000-0000-0000-000000000000
 export CAD_API_SECRET='...'
 ```
+
+The order is fixed:
+
+1. If `CAD_API_KEY` or `CAD_API_SECRET` is set, the environment decides alone,
+   and a missing half is an error. A stored login is not consulted.
+2. Otherwise the login in the system keyring, unless `CAD_CLI_KEYRING=0`. A
+   keyring that cannot answer is not an error: the lookup goes on.
+3. Then the login in the credentials file.
+4. Otherwise the command stops with exit status 2 and asks you to run
+   `cad-cli auth login` or set the variables.
+
+Shell completion finds credentials the same way.
 
 Instead of `CAD_SERVER_URL`, select a preset with `--environment staging` or
 `--environment production`, or set `CAD_ENV` to the same value. Both accept the
@@ -142,6 +215,7 @@ same in the terminal.
 <!-- cli-commands:start -->
 | Command | Description |
 |---|---|
+| [`auth`](docs/cli/auth.md) | Log in to a server with an API key, check the login and log out |
 | [`activity-category`](docs/cli/activity-category.md) | Manage the company's activity categories |
 | [`activity-group`](docs/cli/activity-group.md) | Manage the company's activity groups |
 | [`benchmark`](docs/cli/benchmark.md) | Read and update the company benchmark |
@@ -422,8 +496,8 @@ roff manual page.
 `--company-id` and the reporting-period IDs of `reporting-period get`,
 `details`, `update` and `delete` are completed from the platform, with the
 company or period name shown beside each ID where the shell supports it. These
-lookups use the same configuration as any other command (`CAD_API_KEY`,
-`CAD_API_SECRET`, the server, and `--company-id` or `CAD_COMPANY_ID` for
+lookups use the same configuration as any other command (your login or
+`CAD_API_KEY` and `CAD_API_SECRET`, the server, and `--company-id` or `CAD_COMPANY_ID` for
 reporting periods) and follow strict rules:
 
 - they never prompt and print nothing but candidates; without credentials or a
@@ -440,4 +514,9 @@ reporting periods) and follow strict rules:
 
 ## License
 
-MIT
+MIT.
+
+The Linux builds link libdbus statically to reach the system keyring. libdbus
+is licensed under the Academic Free License 2.1 or the GPL 2.0 or later, and
+cad-cli uses it under the former; its license ships in the Linux archives as
+`LICENSE-dbus`.
