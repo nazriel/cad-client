@@ -1,6 +1,10 @@
 //! Root command-line parser and arguments shared by multiple commands.
 
 pub(crate) mod args;
+// The build script's version logic, compiled here only for its unit tests.
+#[cfg(test)]
+#[path = "../../build/version.rs"]
+mod build_version;
 #[cfg(test)]
 mod docs;
 pub(crate) mod help;
@@ -113,7 +117,9 @@ fn render_help_logo(colour: bool) -> String {
 #[derive(Debug, Parser)]
 #[command(
     name = "cad-cli",
-    version,
+    // Set by build.rs: the package version, with a `-dev+<commit>` suffix
+    // when the build names a commit through CAD_CLI_BUILD_COMMIT.
+    version = env!("CAD_CLI_BUILD_VERSION"),
     about = None,
     after_long_help = help::environment_and_examples(ENVIRONMENT, EXAMPLES)
 )]
