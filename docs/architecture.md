@@ -39,6 +39,37 @@ or wire-level request structs. A command returns `serde_json::Value`; output
 formatting is centralized. Stdout contains only the requested artifact or data,
 while errors, logs, prompts, status, and progress use stderr.
 
+### Self-update: the one non-platform HTTP client
+
+`cad-cli update` and the background release notice talk to GitHub, which is
+not the CAD platform, so they do not belong in `cad-api`. All of it lives in
+`crates/cad-client/src/exec/update/`, the only place `cad-client` uses
+`reqwest` directly:
+
+```text
+crates/cad-client/src/exec/update/
+├── mod.rs        # release lookup, size-capped downloads, URL policy
+├── target.rs     # OS/architecture -> published target and archive names
+├── archive.rs    # SHA256SUMS verification and executable extraction
+├── install.rs    # `--version` probe of the new binary, executable replacement
+├── notes.rs      # release notes shown on stderr after an update
+├── notice.rs     # background check, daily throttle, state file, disable rules
+└── tests.rs      # contract tests and release fixtures shared with the command
+crates/cad-client/src/cmds/update/
+├── mod.rs        # Clap arguments and the command workflow
+└── tests.rs
+```
+
+The updater follows only HTTPS URLs; plain HTTP is accepted only for a
+loopback `CAD_CLI_UPDATE_URL`, the seam tests use to serve fake releases. Asset
+names and checksum rules must stay in step with `install.sh`, `install.ps1` and
+`mise run dist`, and the notes parser with `mise run release:notes`. `update`
+is a standalone invocation in `cmds/mod.rs`: it resolves no platform
+configuration, yet renders its result through the selected output format like
+an online command. Its release notes are reading matter, not data: they go to
+stderr through `Terminal::notes`, only with table output and only at a
+terminal.
+
 ## Platform routes and OpenAPI
 
 `openapi/openapi_current.json` is the current development contract. Inspect it
