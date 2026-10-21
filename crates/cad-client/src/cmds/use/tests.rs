@@ -6,14 +6,14 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use clap::Parser;
 use secrecy::SecretString;
 use serde_json::{Value, json};
 use uuid::Uuid;
-use wiremock::matchers::{header, method, path};
+use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use super::Report;
@@ -32,7 +32,11 @@ const SECRET: &str = "cad_aks_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_AbCde";
 const USER_ID: &str = "00000000-0000-0000-0000-0000000000bb";
 const COMPANY_ID: &str = "00000000-0000-0000-0000-0000000000cc";
 const EMAIL: &str = "jane@example.test";
+const OTHER_COMPANY_ID: &str = "00000000-0000-0000-0000-0000000000dd";
+const THIRD_COMPANY_ID: &str = "00000000-0000-0000-0000-0000000000ee";
+const FORBIDDEN_COMPANY_ID: &str = "00000000-0000-0000-0000-0000000000ff";
 const IDENTITY_PATH: &str = "/api/auth/v2/machine/identity";
+const COMPANIES_PATH: &str = "/api/accounts/v1/companies";
 const USER_PATH: &str = "/api/accounts/v1/users/00000000-0000-0000-0000-0000000000bb";
 const KEYRING_DOWN: &str = "no secret service is running";
 
@@ -69,6 +73,10 @@ struct Scripted {
     key_ids: Mutex<VecDeque<String>>,
     secrets: Mutex<VecDeque<String>>,
     answers: Mutex<VecDeque<bool>>,
+    /// The indexes a person picks in `select`, in order; Esc when none is left.
+    selections: Mutex<VecDeque<usize>>,
+    /// What `select` showed: the label, then the options.
+    menus: Mutex<Vec<(String, Vec<String>)>>,
     labels: Mutex<Vec<String>>,
     questions: Mutex<Vec<String>>,
     opened: Mutex<Vec<String>>,
@@ -118,6 +126,19 @@ impl Scripted {
                 Err(reason) => self.status(StatusKind::Warning, &reason)?,
             }
         }
+    }
+
+    /// A terminal whose person picks `indexes` from the menus, in order.
+    fn picking(indexes: &[usize]) -> Self {
+        Self {
+            interactive: true,
+            selections: Mutex::new(indexes.iter().copied().collect()),
+            ..Self::default()
+        }
+    }
+
+    fn menus(&self) -> Vec<(String, Vec<String>)> {
+        self.menus.lock().unwrap().clone()
     }
 
     fn opened(&self) -> Vec<String> {
@@ -190,6 +211,18 @@ impl Terminal for Scripted {
             .expect("a scripted answer"))
     }
 
+    fn select(&self, label: &str, options: &[String]) -> Result<usize, CliError> {
+        self.menus
+            .lock()
+            .unwrap()
+            .push((label.to_owned(), options.to_vec()));
+        self.selections
+            .lock()
+            .unwrap()
+            .pop_front()
+            .ok_or(CliError::Cancelled)
+    }
+
     fn open_url(&self, url: &str) -> bool {
         self.opened.lock().unwrap().push(url.to_owned());
         true
@@ -229,39 +262,86 @@ impl Backend for CountingKeyring {
     }
 }
 
-/// A platform that accepts exactly one key and knows its user.
-async fn platform() -> MockServer {
+/// A company the platform lists.
+fn company_json(id: &str, name: Option<&str>, status: &str) -> Value {
+    json!({
+        "id": id,
+        "name": name,
+        "displayName": name,
+        "createdAt": "2026-01-01T00:00:00Z",
+        "isConsultingCompany": false,
+        "isDemoCompany": false,
+        "availableClientCompanies": null,
+        "companyStatus": status
+    })
+}
+
+/// The one company a platform lists unless a test says otherwise.
+fn acme() -> Value {
+    company_json(COMPANY_ID, Some("Acme GmbH"), "ACTIVE")
+}
+
+/// A platform that accepts exactly one key, knows its user and lists
+/// `companies`. Its identity endpoint resolves the company named by the
+/// `X-CAD-Company-Id` header, or refuses it with a 403 when it is
+/// `FORBIDDEN_COMPANY_ID`; without the header it resolves `COMPANY_ID`.
+async fn platform_with(companies: Option<Vec<Value>>, email_known: Arc<AtomicBool>) -> MockServer {
     let server = MockServer::start().await;
+    let bearer = format!("Bearer {}", token());
     Mock::given(method("GET"))
         .and(path(IDENTITY_PATH))
-        .and(header(
-            "authorization",
-            format!("Bearer {}", token()).as_str(),
-        ))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "principal": {"userId": USER_ID, "affiliatedCompanyId": COMPANY_ID},
-            "companySelection": {"resolvedCompanyId": COMPANY_ID, "source": "DEFAULT"}
-        })))
-        .mount(&server)
-        .await;
-    Mock::given(method("GET"))
-        .and(path(IDENTITY_PATH))
-        .respond_with(ResponseTemplate::new(401).set_body_json(json!({"detail": "nope"})))
+        .respond_with(move |request: &wiremock::Request| {
+            let accepted = request
+                .headers
+                .get("authorization")
+                .and_then(|value| value.to_str().ok())
+                == Some(bearer.as_str());
+            if !accepted {
+                return ResponseTemplate::new(401).set_body_json(json!({"detail": "nope"}));
+            }
+            let requested = request
+                .headers
+                .get("X-CAD-Company-Id")
+                .and_then(|value| value.to_str().ok());
+            if requested == Some(FORBIDDEN_COMPANY_ID) {
+                return ResponseTemplate::new(403).set_body_json(json!({"detail": "no access"}));
+            }
+            ResponseTemplate::new(200).set_body_json(json!({
+                "principal": {"userId": USER_ID, "affiliatedCompanyId": COMPANY_ID},
+                "companySelection": {
+                    "resolvedCompanyId": requested.unwrap_or(COMPANY_ID),
+                    "source": if requested.is_some() { "HEADER" } else { "DEFAULT" }
+                }
+            }))
+        })
         .mount(&server)
         .await;
     Mock::given(method("GET"))
         .and(path(USER_PATH))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(json!({"id": USER_ID, "email": EMAIL, "firstName": "Jane"})),
-        )
+        .respond_with(move |_: &wiremock::Request| {
+            if email_known.load(Ordering::SeqCst) {
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"id": USER_ID, "email": EMAIL, "firstName": "Jane"}))
+            } else {
+                ResponseTemplate::new(500)
+            }
+        })
         .mount(&server)
         .await;
+    if let Some(companies) = companies {
+        Mock::given(method("GET"))
+            .and(path(COMPANIES_PATH))
+            .respond_with(ResponseTemplate::new(200).set_body_json(companies))
+            .mount(&server)
+            .await;
+    }
     server
 }
 
 struct World {
     server: MockServer,
+    /// Whether the platform answers the request for the account's e-mail.
+    email_known: Arc<AtomicBool>,
     origin: String,
     keyring: Arc<MemoryBackend>,
     store: CredentialStore,
@@ -276,7 +356,17 @@ async fn world() -> World {
 }
 
 async fn world_with(keyring: MemoryBackend) -> World {
-    let server = platform().await;
+    world_fixture(keyring, Some(vec![acme()])).await
+}
+
+/// A world whose platform lists `companies`, or has no such endpoint.
+async fn world_listing(companies: &[Value]) -> World {
+    world_fixture(MemoryBackend::default(), Some(companies.to_vec())).await
+}
+
+async fn world_fixture(keyring: MemoryBackend, companies: Option<Vec<Value>>) -> World {
+    let email_known = Arc::new(AtomicBool::new(true));
+    let server = platform_with(companies, Arc::clone(&email_known)).await;
     let dir = tempfile::tempdir().unwrap();
     let credentials_file = dir.path().join("cad-cli").join("credentials.json");
     let profiles_file = dir.path().join("cad-cli").join("profiles.json");
@@ -287,6 +377,7 @@ async fn world_with(keyring: MemoryBackend) -> World {
     );
     World {
         origin: server.uri(),
+        email_known,
         server,
         keyring,
         store,
@@ -514,10 +605,16 @@ async fn a_new_profile_with_a_token_stores_the_login_the_email_and_the_active_pr
             ),
             (
                 StatusKind::Success,
+                "using company Acme GmbH for profile local".to_owned()
+            ),
+            (
+                StatusKind::Success,
                 format!("now using local ({}) as {EMAIL}", world.origin)
             ),
         ]
     );
+    assert_eq!(row["companyId"], COMPANY_ID);
+    assert_eq!(row["companyName"], "Acme GmbH");
 
     // profiles.json holds the metadata and no secret.
     let text = std::fs::read_to_string(&world.profiles_file).unwrap();
@@ -528,6 +625,10 @@ async fn a_new_profile_with_a_token_stores_the_login_the_email_and_the_active_pr
     assert_eq!(document["profiles"]["local"]["url"], world.origin.as_str());
     assert_eq!(document["profiles"]["local"]["allowInsecureHttp"], true);
     assert_eq!(document["profiles"]["local"]["login"]["email"], EMAIL);
+    assert_eq!(
+        document["profiles"]["local"]["company"],
+        json!({"id": COMPANY_ID, "name": "Acme GmbH"})
+    );
 
     // The secret is filed under the profile's name, with its origin.
     assert!(
@@ -541,7 +642,11 @@ async fn a_new_profile_with_a_token_stores_the_login_the_email_and_the_active_pr
     assert_eq!(entry["origin"], world.origin.as_str());
     assert_eq!(entry["userId"], USER_ID);
     assert!(!shown(&report).contains(SECRET));
-    assert_eq!(world.requests().await, 2, "the identity and the user");
+    assert_eq!(
+        world.requests().await,
+        3,
+        "the identity, the user and the companies"
+    );
 }
 
 #[tokio::test]
@@ -1416,7 +1521,15 @@ async fn use_lists_the_profiles_sorted_with_their_login_metadata_and_never_conne
     assert_eq!(rows[1]["name"], "local");
     assert_eq!(rows[0]["active"], true);
     assert_eq!(rows[0]["selected"], true);
-    for field in ["email", "userId", "keyId", "storage", "storedAt"] {
+    for field in [
+        "email",
+        "userId",
+        "keyId",
+        "storage",
+        "storedAt",
+        "companyId",
+        "companyName",
+    ] {
         assert_eq!(
             rows[0][field],
             Value::Null,
@@ -1435,9 +1548,21 @@ async fn use_lists_the_profiles_sorted_with_their_login_metadata_and_never_conne
     assert_eq!(
         keys,
         [
-            "active", "email", "keyId", "name", "selected", "storage", "storedAt", "url", "userId"
+            "active",
+            "companyId",
+            "companyName",
+            "email",
+            "keyId",
+            "name",
+            "selected",
+            "storage",
+            "storedAt",
+            "url",
+            "userId"
         ]
     );
+    assert_eq!(rows[1]["companyId"], COMPANY_ID);
+    assert_eq!(rows[1]["companyName"], "Acme GmbH");
     assert_eq!(rows[1]["keyId"], KEY_ID);
     assert_eq!(rows[1]["userId"], USER_ID);
     assert_eq!(rows[1]["email"], EMAIL);
@@ -1828,4 +1953,1008 @@ async fn forget_with_an_unreachable_keyring_says_so() {
             .iter()
             .any(|(kind, text)| *kind == StatusKind::Warning && text.contains(KEYRING_DOWN))
     );
+}
+
+// --- the company ---------------------------------------------------------------
+
+fn other_company() -> Value {
+    company_json(OTHER_COMPANY_ID, Some("Other AG"), "ACTIVE")
+}
+
+/// A world with two companies, and a profile `local` logged in on it without
+/// a company: with several to choose from and no terminal, the login leaves it
+/// unset.
+async fn world_with_two_companies() -> World {
+    let world = world_listing(&[acme(), other_company()]).await;
+    login_local(&world).await;
+    assert_eq!(world.set().get(&name("local")).unwrap().company, None);
+    world
+}
+
+async fn login_local(world: &World) -> Report {
+    world
+        .profile(
+            "local",
+            &["--with-token", "--insecure-storage"],
+            &Scripted::piped(&token()),
+            &Env::default(),
+        )
+        .await
+        .unwrap()
+}
+
+fn company_of(world: &World, profile: &str) -> Option<(String, Option<String>)> {
+    world
+        .set()
+        .get(&name(profile))
+        .unwrap()
+        .company
+        .as_ref()
+        .map(|company| (company.id.to_string(), company.name.clone()))
+}
+
+fn chosen(id: &str, company_name: Option<&str>) -> (String, Option<String>) {
+    (id.to_owned(), company_name.map(str::to_owned))
+}
+
+const NO_COMPANY_HINT: &str = "no company is selected; run `cad-cli use company <name|id>`";
+
+#[test]
+fn use_company_and_use_check_parse_and_the_old_context_command_is_gone() {
+    for rest in [
+        vec!["use", "company", "Acme GmbH"],
+        vec!["use", "company", "00000000-0000-0000-0000-0000000000cc"],
+        vec!["--profile", "staging", "use", "company", "Acme"],
+        vec!["use", "--check"],
+        vec![
+            "--company-id",
+            COMPANY_ID,
+            "--output",
+            "json",
+            "use",
+            "--check",
+        ],
+    ] {
+        let mut args = vec!["cad-cli"];
+        args.extend(rest);
+        Cli::try_parse_from(args).expect("parses");
+    }
+    Cli::try_parse_from(["cad-cli", "use", "company"]).expect_err("a company is required");
+    Cli::try_parse_from(["cad-cli", "use", "company", "  "]).expect_err("blank is no company");
+    Cli::try_parse_from(["cad-cli", "use", "--check", "company", "Acme"])
+        .expect_err("--check stands alone");
+    Cli::try_parse_from(["cad-cli", "use", "--check", "profile", "dev"])
+        .expect_err("--check stands alone");
+    Cli::try_parse_from(["cad-cli", "context", "show"]).expect_err("`context` is gone");
+}
+
+#[test]
+fn the_argument_is_an_id_when_it_is_one_and_a_name_otherwise() {
+    use super::company::CompanyChoice;
+
+    assert_eq!(
+        format!(" {COMPANY_ID} ").parse::<CompanyChoice>(),
+        Ok(CompanyChoice::Id(COMPANY_ID.parse().unwrap()))
+    );
+    assert_eq!(
+        " Acme GmbH ".parse::<CompanyChoice>(),
+        Ok(CompanyChoice::Name("Acme GmbH".to_owned()))
+    );
+    assert!("  ".parse::<CompanyChoice>().is_err());
+}
+
+#[tokio::test]
+async fn a_company_is_chosen_by_id_and_saved_on_the_profile() {
+    let world = world_with_two_companies().await;
+    let before = world.requests().await;
+
+    let report = world
+        .run(
+            &["use", "company", OTHER_COMPANY_ID],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        report.value,
+        json!({
+            "profile": "local",
+            "company": {"id": OTHER_COMPANY_ID, "name": "Other AG"},
+            "previous": null
+        })
+    );
+    assert_eq!(
+        report.messages,
+        [(
+            StatusKind::Success,
+            format!(
+                "Using company Other AG on local ({}) as {EMAIL}",
+                world.origin
+            )
+        )]
+    );
+    assert_eq!(
+        company_of(&world, "local"),
+        Some(chosen(OTHER_COMPANY_ID, Some("Other AG")))
+    );
+    // The key, the companies, and access to the one chosen.
+    assert_eq!(world.requests().await, before + 3);
+    let requests = world.server.received_requests().await.unwrap();
+    let last = requests.last().unwrap();
+    assert_eq!(last.url.path(), IDENTITY_PATH);
+    assert_eq!(
+        last.headers
+            .get("X-CAD-Company-Id")
+            .and_then(|value| value.to_str().ok()),
+        Some(OTHER_COMPANY_ID)
+    );
+    assert!(
+        requests[before..requests.len() - 1]
+            .iter()
+            .all(|request| !request.headers.contains_key("X-CAD-Company-Id")),
+        "the key is checked and the companies are listed with no company selected"
+    );
+    // Active is untouched.
+    assert_eq!(world.set().active(), Some(&name("local")));
+}
+
+#[tokio::test]
+async fn a_company_is_chosen_by_name_ignoring_case_and_spaces_and_the_old_one_is_reported() {
+    let world = world_with_two_companies().await;
+    world
+        .run(
+            &["use", "company", OTHER_COMPANY_ID],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+
+    let report = world
+        .run(
+            &["use", "company", "  aCME gmbh "],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        report.value,
+        json!({
+            "profile": "local",
+            "company": {"id": COMPANY_ID, "name": "Acme GmbH"},
+            "previous": {"id": OTHER_COMPANY_ID, "name": "Other AG"}
+        })
+    );
+    assert_eq!(
+        report.messages,
+        [(
+            StatusKind::Success,
+            format!(
+                "Using company Acme GmbH on local ({}) as {EMAIL} (was Other AG)",
+                world.origin
+            )
+        )]
+    );
+    assert_eq!(
+        company_of(&world, "local"),
+        Some(chosen(COMPANY_ID, Some("Acme GmbH")))
+    );
+
+    // The same company again changes nothing and reports no change.
+    let report = world
+        .run(
+            &["use", "company", "Acme GmbH"],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+    assert!(!report.messages[0].1.contains("(was"));
+}
+
+#[tokio::test]
+async fn an_id_the_list_does_not_have_is_still_tried_and_has_no_name() {
+    let world = world_with_two_companies().await;
+
+    let report = world
+        .run(
+            &["use", "company", THIRD_COMPANY_ID],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        report.value["company"],
+        json!({"id": THIRD_COMPANY_ID, "name": null})
+    );
+    assert_eq!(
+        report.messages[0].1,
+        format!(
+            "Using company {THIRD_COMPANY_ID} on local ({}) as {EMAIL}",
+            world.origin
+        )
+    );
+    assert_eq!(
+        company_of(&world, "local"),
+        Some(chosen(THIRD_COMPANY_ID, None))
+    );
+}
+
+#[tokio::test]
+async fn a_name_nobody_has_is_refused_and_a_deleted_company_has_no_name_to_match() {
+    let world = world_listing(&[
+        acme(),
+        company_json(OTHER_COMPANY_ID, Some("Gone Ltd"), "DELETED"),
+        acme_twin(),
+    ])
+    .await;
+    login_local(&world).await;
+    world
+        .run(
+            &["use", "company", COMPANY_ID],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+    let before = world.set();
+
+    for wanted in ["Nowhere", "Gone Ltd", "Acme"] {
+        let error = world
+            .run(
+                &["use", "company", wanted],
+                &Scripted::default(),
+                &Env::default(),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(error, CliError::Input(_)));
+        assert_eq!(exit_code(&error), ExitCode::from(2));
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "invalid input: no accessible company is named \"{wanted}\"; list them with \
+                 `cad-cli company list`"
+            )
+        );
+    }
+    assert_eq!(world.set(), before, "nothing was saved");
+}
+
+/// Another company with the same name as Acme's, in another case.
+fn acme_twin() -> Value {
+    company_json(THIRD_COMPANY_ID, Some("ACME GMBH"), "ACTIVE")
+}
+
+#[tokio::test]
+async fn several_companies_with_the_name_are_listed_with_their_ids_and_nothing_is_saved() {
+    let world = world_listing(&[acme(), other_company(), acme_twin()]).await;
+    login_local(&world).await;
+    let before = world.set();
+
+    let error = world
+        .run(
+            &["use", "company", "acme gmbh"],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, CliError::Input(_)));
+    assert_eq!(exit_code(&error), ExitCode::from(2));
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "invalid input: several accessible companies are named \"acme gmbh\"; use the ID of \
+             the one you mean:\n{COMPANY_ID} Acme GmbH\n{THIRD_COMPANY_ID} ACME GMBH"
+        )
+    );
+    assert_eq!(world.set(), before);
+}
+
+#[tokio::test]
+async fn a_company_the_key_cannot_act_on_saves_nothing_and_keeps_the_errors_exit_code() {
+    let world = world_with_two_companies().await;
+    world
+        .run(
+            &["use", "company", OTHER_COMPANY_ID],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+    let before = world.set();
+
+    let error = world
+        .run(
+            &["use", "company", FORBIDDEN_COMPANY_ID],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, CliError::Api { .. }), "{error:?}");
+    assert_eq!(exit_code(&error), ExitCode::from(4));
+    assert!(error.to_string().contains("HTTP 403"), "{error}");
+    assert_eq!(world.set(), before, "nothing was saved");
+}
+
+#[tokio::test]
+async fn a_rejected_key_exits_three_before_anything_is_listed() {
+    let world = world_with_two_companies().await;
+    let error = world
+        .run(
+            &["use", "company", "Acme GmbH"],
+            &Scripted::default(),
+            &Env::default()
+                .with("CAD_API_KEY", KEY_ID)
+                .with("CAD_API_SECRET", "wrong"),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(exit_code(&error), ExitCode::from(3));
+    assert_eq!(company_of(&world, "local"), None);
+}
+
+#[tokio::test]
+async fn the_company_goes_to_the_profile_named_with_profile_and_active_stays() {
+    let world = world_with_two_companies().await;
+    // A second profile on the same server; it becomes the active one.
+    world
+        .profile(
+            "second",
+            &["--with-token", "--insecure-storage"],
+            &Scripted::piped(&token()),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(world.set().active(), Some(&name("second")));
+    assert_eq!(company_of(&world, "second"), None);
+
+    let report = world
+        .run(
+            &["--profile", "local", "use", "company", "Other AG"],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(report.value["profile"], "local");
+    assert_eq!(
+        company_of(&world, "local"),
+        Some(chosen(OTHER_COMPANY_ID, Some("Other AG")))
+    );
+    assert_eq!(
+        company_of(&world, "second"),
+        None,
+        "the active profile is left alone"
+    );
+    assert_eq!(world.set().active(), Some(&name("second")));
+
+    // Without --profile it is the active profile that changes.
+    let report = world
+        .run(
+            &["use", "company", "Acme GmbH"],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(report.value["profile"], "second");
+}
+
+#[tokio::test]
+async fn use_company_refuses_company_id_needs_a_profile_and_a_login() {
+    let world = world_with_two_companies().await;
+    let before = world.set();
+    let error = world
+        .run(
+            &["--company-id", COMPANY_ID, "use", "company", "Acme GmbH"],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, CliError::Input(_)));
+    assert_eq!(
+        error.to_string(),
+        "invalid input: --company-id does not apply to `cad-cli use company`; name the company \
+         as its argument"
+    );
+    assert_eq!(world.set(), before);
+
+    // A profile with no login.
+    world
+        .run(
+            &["use", "profile", "dev"],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+    let error = world
+        .run(
+            &["use", "company", "Acme GmbH"],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(exit_code(&error), ExitCode::from(2));
+    assert!(
+        error.to_string().contains("profile dev has no login"),
+        "{error}"
+    );
+
+    // No profile at all, even with a server and a key in the environment.
+    let empty = self::world().await;
+    let error = empty
+        .run(
+            &[
+                "--server-url",
+                &empty.origin,
+                "--allow-insecure-http",
+                "use",
+                "company",
+                "Acme",
+            ],
+            &Scripted::default(),
+            &Env::default()
+                .with("CAD_API_KEY", KEY_ID)
+                .with("CAD_API_SECRET", SECRET),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, CliError::Config { .. }));
+    assert_eq!(exit_code(&error), ExitCode::from(2));
+    assert_eq!(
+        error.to_string(),
+        "configuration error: `cad-cli use company` needs a profile; create one with `cad-cli \
+         use profile <name>`"
+    );
+    assert_eq!(empty.requests().await, 0);
+}
+
+#[tokio::test]
+async fn a_company_in_the_environment_is_said_to_win_over_the_profiles() {
+    let world = world_with_two_companies().await;
+    let report = world
+        .run(
+            &["use", "company", "Acme GmbH"],
+            &Scripted::default(),
+            &Env::default().with("CAD_COMPANY_ID", OTHER_COMPANY_ID),
+        )
+        .await
+        .unwrap();
+    assert_eq!(report.messages.len(), 2);
+    assert_eq!(report.messages[1].0, StatusKind::Warning);
+    assert_eq!(
+        report.messages[1].1,
+        format!(
+            "CAD_COMPANY_ID is set to {OTHER_COMPANY_ID} and overrides the company of the \
+             profile in this shell"
+        )
+    );
+    // Even a malformed variable does not stop the choice: it does not apply.
+    world
+        .run(
+            &["use", "company", "Other AG"],
+            &Scripted::default(),
+            &Env::default().with("CAD_COMPANY_ID", "nonsense"),
+        )
+        .await
+        .unwrap();
+}
+
+// --- the company offered after a login -----------------------------------------
+
+#[tokio::test]
+async fn several_companies_and_no_terminal_leave_it_unset_with_the_way_to_set_it() {
+    let world = world_listing(&[acme(), other_company()]).await;
+    let report = login_local(&world).await;
+
+    assert_eq!(report.value["companyId"], Value::Null);
+    assert_eq!(report.value["companyName"], Value::Null);
+    let messages: Vec<_> = report
+        .messages
+        .iter()
+        .map(|(_, text)| text.as_str())
+        .collect();
+    assert_eq!(messages.len(), 3, "{messages:?}");
+    assert_eq!(
+        report.messages[1],
+        (StatusKind::Warning, NO_COMPANY_HINT.to_owned())
+    );
+    assert_eq!(company_of(&world, "local"), None);
+}
+
+#[tokio::test]
+async fn at_a_terminal_the_person_picks_among_the_companies_sorted_by_name() {
+    // Listed out of order: the menu is by name.
+    let world = world_listing(&[other_company(), acme()]).await;
+    let terminal = Scripted {
+        stdin: token().into_bytes(),
+        ..Scripted::picking(&[1])
+    };
+
+    let report = world
+        .profile(
+            "local",
+            &["--with-token", "--insecure-storage"],
+            &terminal,
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        terminal.menus(),
+        [(
+            "Company for profile local:".to_owned(),
+            vec![
+                format!("Acme GmbH ({COMPANY_ID})"),
+                format!("Other AG ({OTHER_COMPANY_ID})"),
+            ]
+        )]
+    );
+    assert_eq!(report.value["companyId"], OTHER_COMPANY_ID);
+    assert_eq!(
+        company_of(&world, "local"),
+        Some(chosen(OTHER_COMPANY_ID, Some("Other AG")))
+    );
+    assert!(
+        report
+            .messages
+            .iter()
+            .any(|(kind, text)| *kind == StatusKind::Success
+                && text == "using company Other AG for profile local")
+    );
+}
+
+#[tokio::test]
+async fn giving_up_the_menu_leaves_the_company_unset_with_the_hint_and_the_login_stays() {
+    let world = world_listing(&[acme(), other_company()]).await;
+    let terminal = Scripted {
+        stdin: token().into_bytes(),
+        ..Scripted::picking(&[])
+    };
+
+    let report = world
+        .profile(
+            "local",
+            &["--with-token", "--insecure-storage"],
+            &terminal,
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(terminal.menus().len(), 1);
+    assert_eq!(company_of(&world, "local"), None);
+    assert_eq!(
+        report.messages[1],
+        (StatusKind::Warning, NO_COMPANY_HINT.to_owned())
+    );
+    assert_eq!(report.value["email"], EMAIL, "the login was kept");
+    assert!(world.stored());
+}
+
+#[tokio::test]
+async fn no_companies_or_a_list_that_fails_leave_it_unset_and_the_login_succeeds() {
+    let none = world_listing(&[]).await;
+    let report = login_local(&none).await;
+    assert_eq!(
+        report.messages[1],
+        (StatusKind::Warning, NO_COMPANY_HINT.to_owned())
+    );
+    assert_eq!(company_of(&none, "local"), None);
+
+    let only_deleted = world_listing(&[company_json(COMPANY_ID, Some("Gone"), "DELETED")]).await;
+    let report = login_local(&only_deleted).await;
+    assert_eq!(
+        report.messages[1],
+        (StatusKind::Warning, NO_COMPANY_HINT.to_owned())
+    );
+
+    let failing = world_fixture(MemoryBackend::default(), None).await;
+    let report = login_local(&failing).await;
+    assert_eq!(report.messages[1].0, StatusKind::Warning);
+    assert!(
+        report.messages[1]
+            .1
+            .starts_with("could not list the companies ("),
+        "{:?}",
+        report.messages
+    );
+    assert_eq!(
+        report.messages[2],
+        (StatusKind::Warning, NO_COMPANY_HINT.to_owned())
+    );
+    assert_eq!(company_of(&failing, "local"), None);
+    assert!(failing.stored(), "the login stays");
+}
+
+#[tokio::test]
+async fn logging_in_as_another_user_clears_the_company_and_the_same_user_keeps_it() {
+    let world = world_with_two_companies().await;
+    world
+        .run(
+            &["use", "company", OTHER_COMPANY_ID],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+
+    // The same user logging in again keeps the company and asks nothing.
+    let before = world.requests().await;
+    let report = world
+        .profile(
+            "local",
+            &["--login", "--with-token", "--insecure-storage"],
+            &Scripted::piped(&token()),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        world.requests().await,
+        before + 2,
+        "the identity and the user"
+    );
+    assert_eq!(report.value["companyId"], OTHER_COMPANY_ID);
+
+    // The profile's login was made by someone else: the company was theirs.
+    let mut set = world.set();
+    let mut profile = set.get(&name("local")).unwrap().clone();
+    profile.login.as_mut().unwrap().user_id = Uuid::from_u128(0x99).into();
+    set.insert(name("local"), profile);
+    world.profiles.save(&set).unwrap();
+
+    let report = world
+        .profile(
+            "local",
+            &["--login", "--with-token", "--insecure-storage"],
+            &Scripted::piped(&token()),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(report.value["companyId"], Value::Null);
+    assert!(
+        report.messages.iter().any(|(_, text)| text
+            == "the login is for another account; the company of profile local was cleared"),
+        "{:?}",
+        report.messages
+    );
+    // ...and, with several to choose from and no terminal, it stays unset.
+    assert!(
+        report
+            .messages
+            .contains(&(StatusKind::Warning, NO_COMPANY_HINT.to_owned()))
+    );
+    assert_eq!(company_of(&world, "local"), None);
+}
+
+#[tokio::test]
+async fn switching_to_a_profile_without_a_company_makes_no_request_and_says_how_to_set_it() {
+    let world = world_with_two_companies().await;
+    let before = world.requests().await;
+
+    let report = world
+        .run(
+            &["use", "profile", "local"],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(world.requests().await, before);
+    assert_eq!(
+        report.messages[0],
+        (StatusKind::Warning, NO_COMPANY_HINT.to_owned())
+    );
+
+    // A profile that has a company says nothing.
+    world
+        .run(
+            &["use", "company", "Acme GmbH"],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+    let report = world
+        .run(
+            &["use", "profile", "local"],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        report
+            .messages
+            .iter()
+            .all(|(kind, _)| *kind != StatusKind::Warning)
+    );
+}
+
+// --- use --check ---------------------------------------------------------------
+
+#[tokio::test]
+async fn check_reports_the_profile_the_login_the_user_and_the_company_with_their_sources() {
+    let world = world_with_two_companies().await;
+    world
+        .run(
+            &["use", "company", "Other AG"],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+    // The company of the profile.
+    let before = world.requests().await;
+    let report = world
+        .run(&["use", "--check"], &Scripted::default(), &Env::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        report.value,
+        json!({
+            "profile": "local",
+            "url": world.origin,
+            "credentialsSource": "file",
+            "keyId": KEY_ID,
+            "userId": USER_ID,
+            "email": EMAIL,
+            "companyId": OTHER_COMPANY_ID,
+            "companyName": "Other AG",
+            "companySource": "profile",
+            "resolvedCompanyId": OTHER_COMPANY_ID,
+            "resolvedCompanySource": "HEADER"
+        })
+    );
+    // One identity request, carrying the company, and the user's e-mail.
+    let requests = world.server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), before + 2);
+    assert_eq!(requests[before].url.path(), IDENTITY_PATH);
+    assert_eq!(
+        requests[before]
+            .headers
+            .get("X-CAD-Company-Id")
+            .and_then(|value| value.to_str().ok()),
+        Some(OTHER_COMPANY_ID)
+    );
+    assert_eq!(requests[before + 1].url.path(), USER_PATH);
+    assert_eq!(report.messages[0].0, StatusKind::Success);
+    assert_eq!(
+        report.messages[0].1,
+        format!(
+            "{}: authenticated as {EMAIL} with profile local",
+            world.origin
+        )
+    );
+    assert_eq!(
+        report.messages[1],
+        (
+            StatusKind::Info,
+            format!("company Other AG ({OTHER_COMPANY_ID})")
+        )
+    );
+}
+
+#[tokio::test]
+async fn check_names_the_variable_the_flag_and_the_environments_key_as_sources() {
+    let world = world_with_two_companies().await;
+    world
+        .run(
+            &["use", "company", "Other AG"],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+
+    // The variable beats the profile: a company the profile has no label for.
+    let report = world
+        .run(
+            &["use", "--check"],
+            &Scripted::default(),
+            &Env::default().with("CAD_COMPANY_ID", COMPANY_ID),
+        )
+        .await
+        .unwrap();
+    assert_eq!(report.value["companyId"], COMPANY_ID);
+    assert_eq!(report.value["companyName"], Value::Null);
+    assert_eq!(report.value["companySource"], "environment");
+    assert_eq!(report.value["resolvedCompanyId"], COMPANY_ID);
+    assert_eq!(report.value["resolvedCompanySource"], "HEADER");
+
+    // The flag beats both.
+    let report = world
+        .run(
+            &["--company-id", THIRD_COMPANY_ID, "use", "--check"],
+            &Scripted::default(),
+            &Env::default().with("CAD_COMPANY_ID", COMPANY_ID),
+        )
+        .await
+        .unwrap();
+    assert_eq!(report.value["companyId"], THIRD_COMPANY_ID);
+    assert_eq!(report.value["companyName"], Value::Null);
+    assert_eq!(report.value["companySource"], "flag");
+
+    // The environment's key, and no profile at all.
+    let report = world
+        .run(
+            &[
+                "--server-url",
+                &world.origin,
+                "--allow-insecure-http",
+                "--profile",
+                "local",
+                "use",
+                "--check",
+            ],
+            &Scripted::default(),
+            &Env::default()
+                .with("CAD_API_KEY", KEY_ID)
+                .with("CAD_API_SECRET", SECRET),
+        )
+        .await
+        .unwrap();
+    assert_eq!(report.value["credentialsSource"], "environment");
+    assert_eq!(report.value["keyId"], KEY_ID);
+    assert_eq!(report.value["profile"], "local");
+}
+
+#[tokio::test]
+async fn check_names_the_keyring_when_the_login_is_there() {
+    let world = world().await;
+    world
+        .profile(
+            "local",
+            &["--with-token"],
+            &Scripted::piped(&token()),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+    let report = world
+        .run(&["use", "--check"], &Scripted::default(), &Env::default())
+        .await
+        .unwrap();
+    assert_eq!(report.value["credentialsSource"], "keyring");
+    assert_eq!(report.value["keyId"], KEY_ID);
+}
+
+#[tokio::test]
+async fn check_without_a_company_reports_none_and_is_not_an_error() {
+    let world = world_with_two_companies().await;
+
+    let report = world
+        .run(&["use", "--check"], &Scripted::default(), &Env::default())
+        .await
+        .unwrap();
+
+    for field in ["companyId", "companyName", "companySource"] {
+        assert_eq!(report.value[field], Value::Null, "{field}");
+    }
+    assert_eq!(report.value["profile"], "local");
+    // Nothing was selected, so the platform's answer is its own.
+    assert_eq!(report.value["resolvedCompanyId"], COMPANY_ID);
+    assert_eq!(report.value["resolvedCompanySource"], "DEFAULT");
+    assert_eq!(
+        report.messages.last().unwrap(),
+        &(StatusKind::Warning, NO_COMPANY_HINT.to_owned())
+    );
+    let requests = world.server.received_requests().await.unwrap();
+    let identity = requests
+        .iter()
+        .rev()
+        .find(|request| request.url.path() == IDENTITY_PATH)
+        .unwrap();
+    assert!(!identity.headers.contains_key("X-CAD-Company-Id"));
+}
+
+#[tokio::test]
+async fn check_reads_the_email_afresh_and_survives_not_getting_it() {
+    let world = world_with_two_companies().await;
+    world.email_known.store(false, Ordering::SeqCst);
+
+    let report = world
+        .run(&["use", "--check"], &Scripted::default(), &Env::default())
+        .await
+        .unwrap();
+
+    assert_eq!(report.value["userId"], USER_ID);
+    assert_eq!(report.value["email"], Value::Null);
+    assert!(
+        report
+            .messages
+            .iter()
+            .any(|(kind, text)| *kind == StatusKind::Warning
+                && text.starts_with("could not read the e-mail of the account (")),
+        "{:?}",
+        report.messages
+    );
+    assert_eq!(
+        report.messages[0].1,
+        format!(
+            "{}: authenticated as {USER_ID} with profile local",
+            world.origin
+        )
+    );
+}
+
+#[tokio::test]
+async fn check_fails_like_a_command_without_credentials_with_a_rejected_key_or_a_refused_company() {
+    let world = world_with_two_companies().await;
+
+    // A profile with no login: exit 2, and nothing was asked of the server.
+    world
+        .run(
+            &["use", "profile", "dev"],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+    let before = world.requests().await;
+    let error = world
+        .run(&["use", "--check"], &Scripted::default(), &Env::default())
+        .await
+        .unwrap_err();
+    assert_eq!(exit_code(&error), ExitCode::from(2));
+    assert_eq!(world.requests().await, before);
+
+    // No profile and no credentials either.
+    let empty = self::world().await;
+    let error = empty
+        .run(&["use", "--check"], &Scripted::default(), &Env::default())
+        .await
+        .unwrap_err();
+    assert_eq!(exit_code(&error), ExitCode::from(2));
+
+    // A key the server rejects: exit 3.
+    let error = world
+        .run(
+            &["--profile", "local", "use", "--check"],
+            &Scripted::default(),
+            &Env::default()
+                .with("CAD_API_KEY", KEY_ID)
+                .with("CAD_API_SECRET", "wrong"),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(exit_code(&error), ExitCode::from(3));
+
+    // A company it cannot act on: the exit code of that error.
+    let error = world
+        .run(
+            &[
+                "--profile",
+                "local",
+                "--company-id",
+                FORBIDDEN_COMPANY_ID,
+                "use",
+                "--check",
+            ],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(exit_code(&error), ExitCode::from(4));
 }

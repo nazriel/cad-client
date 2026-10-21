@@ -33,7 +33,7 @@ use strum::{Display, EnumDiscriminants};
 use uuid::Uuid;
 
 pub(crate) use self::file::FileBackend;
-pub(crate) use self::resolve::{Resolved, resolve};
+pub(crate) use self::resolve::{Resolved, Source, resolve};
 pub(crate) use self::system_keyring::KeyringBackend;
 use super::profiles::ProfileName;
 use crate::config::Environment;

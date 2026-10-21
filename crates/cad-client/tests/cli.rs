@@ -95,9 +95,20 @@ fn help_lists_every_command_group_and_exits_zero() {
         .and(predicate::str::contains("custom-option"))
         .and(predicate::str::contains("report"))
         .and(predicate::str::contains("schema"))
-        .and(predicate::str::contains("context"))
-        .and(predicate::str::contains("use"));
+        .and(predicate::str::contains("use"))
+        .and(predicate::str::contains("context").not());
     assert.stdout(stdout);
+}
+
+#[test]
+fn context_show_is_gone_and_use_check_replaces_it() {
+    cad_cli()
+        .args(["context", "show"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "unrecognized subcommand 'context'",
+        ));
 }
 
 #[test]
@@ -651,8 +662,8 @@ async fn another_server_gets_no_key_and_forgetting_removes_the_login_and_the_pro
         "--server-url",
         "http://localhost:1",
         "--allow-insecure-http",
-        "context",
-        "show",
+        "use",
+        "--check",
     ]);
     run(elsewhere)
         .await
@@ -1005,7 +1016,7 @@ fn a_credentials_file_others_can_read_is_refused() {
     std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
 
     cad_cli_in(home.path())
-        .args(["context", "show"])
+        .args(["use", "--check"])
         .assert()
         .code(2)
         .stderr(
@@ -1035,7 +1046,7 @@ fn a_stored_entry_of_an_unknown_kind_is_refused_naming_kind_and_profile() {
     std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
 
     cad_cli_in(home.path())
-        .args(["context", "show"])
+        .args(["use", "--check"])
         .assert()
         .code(2)
         .stderr(
@@ -1079,8 +1090,195 @@ async fn the_environment_beats_a_stored_login() {
     // The stored login would be accepted; the environment's key is not.
     let mut context = cad_cli_in(home.path());
     context
-        .args(["context", "show"])
+        .args(["use", "--check"])
         .env("CAD_API_KEY", Uuid::nil().to_string())
         .env("CAD_API_SECRET", "not-the-stored-secret");
     run(context).await.code(3);
+}
+
+const ACME_ID: &str = "00000000-0000-0000-0000-0000000000a1";
+const OTHER_ID: &str = "00000000-0000-0000-0000-0000000000a2";
+const REPORTING_PERIODS_PATH: &str = "/api/reporting-periods/v1/reporting-periods";
+
+fn listed_company(id: &str, name: &str) -> serde_json::Value {
+    serde_json::json!({
+        "id": id,
+        "name": name,
+        "displayName": name,
+        "createdAt": "2026-01-01T00:00:00Z",
+        "isConsultingCompany": false,
+        "isDemoCompany": false,
+        "availableClientCompanies": null,
+        "companyStatus": "ACTIVE"
+    })
+}
+
+/// A platform for the key above with two companies, whose identity endpoint
+/// resolves the company named by the `X-CAD-Company-Id` header.
+async fn platform_with_two_companies() -> MockServer {
+    let server = MockServer::start().await;
+    let bearer = format!("Bearer {}", token());
+    Mock::given(method("GET"))
+        .and(path(IDENTITY_PATH))
+        .respond_with(move |request: &wiremock::Request| {
+            let accepted = request
+                .headers
+                .get("authorization")
+                .and_then(|value| value.to_str().ok())
+                == Some(bearer.as_str());
+            if !accepted {
+                return ResponseTemplate::new(401)
+                    .set_body_json(serde_json::json!({"detail": "no"}));
+            }
+            let requested = request
+                .headers
+                .get("X-CAD-Company-Id")
+                .and_then(|value| value.to_str().ok());
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "principal": {"userId": USER_ID, "affiliatedCompanyId": ACME_ID},
+                "companySelection": {
+                    "resolvedCompanyId": requested.unwrap_or(ACME_ID),
+                    "source": if requested.is_some() { "HEADER" } else { "DEFAULT" }
+                }
+            }))
+        })
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(USER_PATH))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({"id": USER_ID, "email": EMAIL})),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(COMPANIES_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            listed_company(ACME_ID, "Acme GmbH"),
+            listed_company(OTHER_ID, "Other AG"),
+        ])))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(REPORTING_PERIODS_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .mount(&server)
+        .await;
+    server
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_company_scoped_command_needs_a_company_and_use_company_supplies_it() {
+    let server = platform_with_two_companies().await;
+    let home = tempfile::tempdir().unwrap();
+
+    // Two companies and no terminal: the login leaves the company unset.
+    let mut login = use_profile(home.path(), "local", &server);
+    login
+        .args(["--with-token", "--insecure-storage"])
+        .write_stdin(token());
+    let output = run(login).await.success().get_output().clone();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("no company is selected; run `cad-cli use company <name|id>`"),
+        "{stderr}"
+    );
+    let after_login = server.received_requests().await.unwrap().len();
+
+    // The refusal comes before any request, and the platform's own choice of
+    // company for the key (Acme's) is not used.
+    let mut refused = cad_cli_in(home.path());
+    refused.args(["reporting-period", "list"]);
+    run(refused).await.code(2).stderr(predicate::str::contains(
+        "no company is selected for profile local; run `cad-cli use company <name|id>`, or \
+         pass --company-id or set CAD_COMPANY_ID",
+    ));
+    assert_eq!(
+        server.received_requests().await.unwrap().len(),
+        after_login,
+        "no request was sent"
+    );
+
+    // A session-level command needs no company.
+    let mut list = cad_cli_in(home.path());
+    list.args(["--output", "json", "company", "list"]);
+    run(list).await.success();
+
+    // Choosing one by name.
+    let mut choose = cad_cli_in(home.path());
+    choose.args(["--output", "json", "use", "company", "other ag"]);
+    let output = run(choose).await.success().get_output().clone();
+    let chosen: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        chosen,
+        serde_json::json!({
+            "profile": "local",
+            "company": {"id": OTHER_ID, "name": "Other AG"},
+            "previous": null
+        })
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains(&format!(
+        "Using company Other AG on local ({}) as {EMAIL}",
+        server.uri()
+    )));
+    assert_eq!(
+        stored_profiles(home.path())["profiles"]["local"]["company"],
+        serde_json::json!({"id": OTHER_ID, "name": "Other AG"})
+    );
+
+    // Now the command runs: one identity request carrying the company, and
+    // the command's own.
+    let before = server.received_requests().await.unwrap().len();
+    let mut periods = cad_cli_in(home.path());
+    periods.args(["--output", "json", "reporting-period", "list"]);
+    run(periods).await.success();
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), before + 2);
+    assert_eq!(requests[before].url.path(), IDENTITY_PATH);
+    assert_eq!(requests[before + 1].url.path(), REPORTING_PERIODS_PATH);
+    for request in &requests[before..] {
+        assert_eq!(
+            request
+                .headers
+                .get("X-CAD-Company-Id")
+                .and_then(|value| value.to_str().ok()),
+            Some(OTHER_ID)
+        );
+    }
+
+    // `use --check` shows where it comes from.
+    let mut check = cad_cli_in(home.path());
+    check.args(["--output", "json", "use", "--check"]);
+    let output = run(check).await.success().get_output().clone();
+    let checked: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        checked,
+        serde_json::json!({
+            "profile": "local",
+            "url": server.uri(),
+            "credentialsSource": "file",
+            "keyId": KEY_ID,
+            "userId": USER_ID,
+            "email": EMAIL,
+            "companyId": OTHER_ID,
+            "companyName": "Other AG",
+            "companySource": "profile",
+            "resolvedCompanyId": OTHER_ID,
+            "resolvedCompanySource": "HEADER"
+        })
+    );
+}
+
+#[test]
+fn a_company_scoped_command_without_a_profile_names_the_flag_and_the_variable() {
+    // A key and a server in the environment, but no profile: nothing connects.
+    with_credentials()
+        .env("CAD_SERVER_URL", "https://no-profile.example.test")
+        .args(["reporting-period", "list"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "no company is selected; pass --company-id or set CAD_COMPANY_ID",
+        ));
 }

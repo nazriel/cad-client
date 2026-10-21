@@ -9,7 +9,8 @@
 //!       "url": "https://app.carbonaltdelete.eu",
 //!       "allowInsecureHttp": false,
 //!       "login": {"keyId": "…", "userId": "…", "email": "jane@example.com",
-//!                 "storage": "keyring", "storedAt": "2026-10-21T12:00:00Z"}
+//!                 "storage": "keyring", "storedAt": "2026-10-21T12:00:00Z"},
+//!       "company": {"id": "…", "name": "Acme GmbH"}
 //!     }
 //!   }
 //! }
@@ -32,7 +33,7 @@ use std::io::{ErrorKind, Write};
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use cad_api::ids::UserId;
+use cad_api::ids::{CompanyId, UserId};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -136,7 +137,26 @@ impl Login {
     }
 }
 
-/// A named server and its login.
+/// The company a profile acts on.
+///
+/// The name is a label recorded when the company was chosen, so that it can be
+/// shown back to the person. It is never matched against anything.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Company {
+    pub(crate) id: CompanyId,
+    pub(crate) name: Option<String>,
+}
+
+impl Company {
+    /// The company as a person would name it: the name, or the ID when the
+    /// name is not known.
+    pub(crate) fn label(&self) -> String {
+        self.name.clone().unwrap_or_else(|| self.id.to_string())
+    }
+}
+
+/// A named server, its login and its company.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Profile {
@@ -147,6 +167,9 @@ pub(crate) struct Profile {
     pub(crate) allow_insecure_http: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) login: Option<Login>,
+    /// The company commands act on for this profile, once one was chosen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) company: Option<Company>,
 }
 
 /// Every profile, and which one is active.
@@ -181,6 +204,10 @@ impl ProfileSet {
 
     pub(crate) fn get(&self, name: &ProfileName) -> Option<&Profile> {
         self.profiles.get(name)
+    }
+
+    pub(crate) fn get_mut(&mut self, name: &ProfileName) -> Option<&mut Profile> {
+        self.profiles.get_mut(name)
     }
 
     /// The active profile. An `active` that names no profile, as after the

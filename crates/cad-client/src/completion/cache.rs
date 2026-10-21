@@ -65,16 +65,12 @@ impl CacheKey {
     }
 
     /// Key for a company-scoped `resource`.
-    ///
-    /// `company` is `None` for "the company the API key selects by default",
-    /// which the key hash already pins down.
     pub(crate) fn company(
         resource: &'static str,
         origin: &str,
         api_key_id: Uuid,
-        company: Option<CompanyId>,
+        company: CompanyId,
     ) -> Self {
-        let company = company.map_or_else(|| "default".to_owned(), |id| id.to_string());
         Self {
             resource,
             scope: format!(

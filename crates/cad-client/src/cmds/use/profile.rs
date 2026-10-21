@@ -1,10 +1,11 @@
 //! `cad-cli use profile <name>`.
 
-use super::login::{self, Options};
+use cad_api::ServerConfig;
 use serde::Serialize;
 use strum::EnumString;
 
-use super::{ProfileArgs, ProfileRow, Report, forget, list};
+use super::login::{self, Options};
+use super::{ProfileArgs, ProfileRow, Report, company, forget, list, no_company};
 use crate::app::context::CommandContext;
 use crate::cli::GlobalArgs;
 use crate::config::{Environment, build_server, origin_of_raw, select_profile};
@@ -112,9 +113,16 @@ pub(super) async fn run(
             with_token: args.with_token,
             insecure_storage: args.insecure_storage,
         };
-        let outcome = login::run(options, context, &name, server, environment, store).await?;
-        profile.login = Some(outcome.login);
-        messages.extend(outcome.messages);
+        let session = Session {
+            context,
+            name: &name,
+            server,
+            environment,
+            store,
+        };
+        messages.extend(log_in_and_choose_company(options, session, &mut profile).await?);
+    } else if profile.login.is_some() && profile.company.is_none() {
+        messages.push((StatusKind::Warning, no_company()));
     }
 
     set.insert(name.clone(), profile);
@@ -131,19 +139,36 @@ pub(super) async fn run(
         .into_iter()
         .find(|row| row.name == name)
         .expect("the profile was just saved");
+    messages.extend(now_using(&row, &origin, previous.as_ref(), environment));
+
+    let value = to_value(Switched {
+        profile: row,
+        previous,
+    })?;
+    Ok(Report { value, messages })
+}
+
+/// The lines that say which profile is in use now, and whether `CAD_PROFILE`
+/// overrides it in this shell.
+fn now_using(
+    row: &ProfileRow,
+    origin: &str,
+    previous: Option<&ProfileName>,
+    environment: &impl Environment,
+) -> Vec<(StatusKind, String)> {
+    let name = &row.name;
     let who = row.account().map_or_else(
         || "with no login".to_owned(),
         |account| format!("as {account}"),
     );
     let was = previous
-        .as_ref()
-        .filter(|previous| **previous != name)
+        .filter(|previous| *previous != name)
         .map(|previous| format!(" (was {previous})"))
         .unwrap_or_default();
-    messages.push((
+    let mut messages = vec![(
         StatusKind::Success,
         format!("now using {name} ({origin}) {who}{was}"),
-    ));
+    )];
     if let Some(variable) = environment.get("CAD_PROFILE") {
         messages.push((
             StatusKind::Warning,
@@ -152,12 +177,53 @@ pub(super) async fn run(
             ),
         ));
     }
+    messages
+}
 
-    let value = to_value(Switched {
-        profile: row,
-        previous,
-    })?;
-    Ok(Report { value, messages })
+/// What the login step needs besides the profile it changes.
+struct Session<'a, E> {
+    context: &'a CommandContext<'a>,
+    name: &'a ProfileName,
+    server: ServerConfig,
+    environment: &'a E,
+    store: &'a CredentialStore,
+}
+
+/// Logs `profile` in, then settles its company from the session the login
+/// made. A company belongs to the account it was chosen for, so a login by
+/// another user than the profile's last clears it first.
+async fn log_in_and_choose_company(
+    options: Options,
+    session: Session<'_, impl Environment>,
+    profile: &mut Profile,
+) -> Result<Vec<(StatusKind, String)>, CliError> {
+    let Session {
+        context,
+        name,
+        server,
+        environment,
+        store,
+    } = session;
+    let outcome = login::run(options, context, name, server, environment, store).await?;
+    let mut messages = outcome.messages;
+    if profile
+        .login
+        .as_ref()
+        .is_some_and(|before| before.user_id != outcome.login.user_id)
+        && profile.company.take().is_some()
+    {
+        messages.push((
+            StatusKind::Info,
+            format!("the login is for another account; the company of profile {name} was cleared"),
+        ));
+    }
+    profile.login = Some(outcome.login);
+    if profile.company.is_none() {
+        let offer = company::offer(&outcome.client, context, name).await?;
+        profile.company = offer.company;
+        messages.extend(offer.messages);
+    }
+    Ok(messages)
 }
 
 fn no_login(name: &ProfileName, flag: &str) -> String {
@@ -205,6 +271,7 @@ fn new_profile(
         url: origin_of(&server),
         allow_insecure_http: global.allow_insecure_http,
         login: None,
+        company: None,
     })
 }
 

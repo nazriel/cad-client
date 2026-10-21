@@ -1,11 +1,12 @@
 use std::fmt;
 
 use cad_api::{ApiKeyV2Credentials, ServerConfig, ids::CompanyId};
+use serde::Serialize;
 use uuid::Uuid;
 
 use crate::cli::GlobalArgs;
 use crate::error::CliError;
-use crate::support::credentials::{self, CredentialStore, Resolved};
+use crate::support::credentials::{self, CredentialStore, Resolved, Source as CredentialSource};
 use crate::support::profiles::{ProfileName, ProfileSet};
 
 /// Environment access seam used to make resolution deterministic in tests.
@@ -70,12 +71,44 @@ impl Selection {
     }
 }
 
+/// Why a company was chosen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum CompanySource {
+    /// `--company-id`.
+    Flag,
+    /// `CAD_COMPANY_ID`.
+    Environment,
+    /// The company of the profile in use (`cad-cli use company`).
+    Profile,
+}
+
+/// The company a command acts on, and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SelectedCompany {
+    pub(crate) id: CompanyId,
+    /// The label the profile recorded for this company, if it is the
+    /// profile's own; a company given by flag or variable is known by ID only.
+    pub(crate) name: Option<String>,
+    pub(crate) source: CompanySource,
+}
+
 /// Fully validated configuration. Its `Debug` implementation never prints the
 /// API secret.
 pub struct AppConfig {
     server: ServerConfig,
     credentials: ApiKeyV2Credentials,
-    company_id: Option<CompanyId>,
+    source: CredentialSource,
+    profile: Option<ProfileName>,
+    company: Option<SelectedCompany>,
+}
+
+/// What [`AppConfig`] is made of, for the bootstrap that connects with it.
+pub(crate) struct Parts {
+    pub(crate) server: ServerConfig,
+    pub(crate) credentials: ApiKeyV2Credentials,
+    pub(crate) profile: Option<ProfileName>,
+    pub(crate) company: Option<SelectedCompany>,
 }
 
 impl AppConfig {
@@ -83,7 +116,11 @@ impl AppConfig {
     ///
     /// The server comes from the selection (see [`select`]), the credentials
     /// from the environment or else from what `cad-cli use profile` stored
-    /// for the selected profile (see [`credentials::resolve`]).
+    /// for the selected profile (see [`credentials::resolve`]), and the
+    /// company from `--company-id`, `CAD_COMPANY_ID` or the profile's company
+    /// (see [`select_company`]). A missing company is not an error here: only
+    /// a command that acts on a company needs one (see
+    /// [`Self::require_company`]).
     ///
     /// # Errors
     ///
@@ -97,30 +134,68 @@ impl AppConfig {
     ) -> Result<Self, CliError> {
         let selection = select(args, environment, profiles)?;
         let resolved = resolve_credentials(environment, store, &selection)?;
-        Self::resolve_with(args, environment, selection.server, resolved)
+        let company = select_company(args, environment, profiles, &selection)?;
+        Self::resolve_with(selection, resolved, company)
     }
 
-    /// Like [`Self::resolve`], for a caller that has already found the server
-    /// and the credentials and must not read the store a second time.
+    /// Like [`Self::resolve`], for a caller that has already made the
+    /// selection and found the credentials and the company, and must not read
+    /// the store a second time.
     pub(crate) fn resolve_with(
-        args: &GlobalArgs,
-        environment: &impl Environment,
-        server: ServerConfig,
+        selection: Selection,
         resolved: Resolved,
+        company: Option<SelectedCompany>,
     ) -> Result<Self, CliError> {
+        let source = resolved.source();
         let credentials = resolved.into_credentials()?;
-        let company_id = resolve_company_id(args, environment)?;
-
         Ok(Self {
-            server,
+            server: selection.server,
             credentials,
-            company_id,
+            source,
+            profile: selection.profile.map(|selected| selected.name),
+            company,
         })
     }
 
+    pub(crate) const fn server(&self) -> &ServerConfig {
+        &self.server
+    }
+
+    pub(crate) fn profile(&self) -> Option<&ProfileName> {
+        self.profile.as_ref()
+    }
+
+    pub(crate) const fn company(&self) -> Option<&SelectedCompany> {
+        self.company.as_ref()
+    }
+
+    /// Where the credentials come from, and their Key ID.
+    pub(crate) fn credentials_in_use(&self) -> (CredentialSource, Uuid) {
+        (self.source, self.credentials.api_key())
+    }
+
+    /// Refuses a configuration with no company, for a command that acts on
+    /// one. The platform's own choice of company for the key is never used.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CliError::Config`] naming how to choose a company.
+    pub(crate) fn require_company(&self) -> Result<(), CliError> {
+        if self.company.is_some() {
+            Ok(())
+        } else {
+            Err(missing_company(self.profile.as_ref()))
+        }
+    }
+
     /// Splits the configuration into the values the bootstrap actually needs.
-    pub(crate) fn into_parts(self) -> (ServerConfig, ApiKeyV2Credentials, Option<CompanyId>) {
-        (self.server, self.credentials, self.company_id)
+    pub(crate) fn into_parts(self) -> Parts {
+        Parts {
+            server: self.server,
+            credentials: self.credentials,
+            profile: self.profile,
+            company: self.company,
+        }
     }
 }
 
@@ -130,8 +205,21 @@ impl fmt::Debug for AppConfig {
             .debug_struct("AppConfig")
             .field("server", &self.server)
             .field("credentials", &self.credentials)
-            .field("company_id", &self.company_id)
+            .field("source", &self.source)
+            .field("profile", &self.profile)
+            .field("company", &self.company)
             .finish()
+    }
+}
+
+/// The error for a command that acts on a company when none is selected.
+pub(crate) fn missing_company(profile: Option<&ProfileName>) -> CliError {
+    match profile {
+        Some(profile) => CliError::config(format!(
+            "no company is selected for profile {profile}; run `cad-cli use company <name|id>`, \
+             or pass --company-id or set CAD_COMPANY_ID"
+        )),
+        None => CliError::config("no company is selected; pass --company-id or set CAD_COMPANY_ID"),
     }
 }
 
@@ -331,22 +419,47 @@ pub(crate) fn build_server(raw: &str, allow_http: bool) -> Result<ServerConfig, 
     })
 }
 
-pub(crate) fn resolve_company_id(
+/// The company a command acts on: `--company-id`, else `CAD_COMPANY_ID`,
+/// else the company of the profile in use. There is no other source; in
+/// particular, the company the platform would pick for the key is never used.
+///
+/// The profile in use is the one [`select`] chose, so it is never a profile
+/// whose server is not the one talked to.
+///
+/// # Errors
+///
+/// Returns [`CliError`] when `CAD_COMPANY_ID` is not a UUID.
+pub(crate) fn select_company(
     args: &GlobalArgs,
     environment: &impl Environment,
-) -> Result<Option<CompanyId>, CliError> {
-    if let Some(company_id) = args.company_id {
-        return Ok(Some(company_id));
-    }
-
-    environment
-        .get("CAD_COMPANY_ID")
-        .map(|raw| {
-            raw.parse::<Uuid>()
-                .map(CompanyId::from)
-                .map_err(|error| CliError::config(format!("CAD_COMPANY_ID is not a UUID: {error}")))
-        })
-        .transpose()
+    profiles: &ProfileSet,
+    selection: &Selection,
+) -> Result<Option<SelectedCompany>, CliError> {
+    let of_profile = selection
+        .profile_name()
+        .and_then(|name| profiles.get(name))
+        .and_then(|profile| profile.company.as_ref());
+    let (id, source) = if let Some(id) = args.company_id {
+        (id, CompanySource::Flag)
+    } else if let Some(raw) = environment.get("CAD_COMPANY_ID") {
+        let id = raw
+            .parse::<Uuid>()
+            .map(CompanyId::from)
+            .map_err(|error| CliError::config(format!("CAD_COMPANY_ID is not a UUID: {error}")))?;
+        (id, CompanySource::Environment)
+    } else if let Some(company) = of_profile {
+        return Ok(Some(SelectedCompany {
+            id: company.id,
+            name: company.name.clone(),
+            source: CompanySource::Profile,
+        }));
+    } else {
+        return Ok(None);
+    };
+    let name = of_profile
+        .filter(|company| company.id == id)
+        .and_then(|company| company.name.clone());
+    Ok(Some(SelectedCompany { id, name, source }))
 }
 
 #[cfg(test)]
@@ -405,6 +518,7 @@ mod tests {
                     url: url.to_owned(),
                     allow_insecure_http: url.starts_with("http:"),
                     login: None,
+                    company: None,
                 },
             );
         }
@@ -740,6 +854,7 @@ mod tests {
                 url: LOCAL.to_owned(),
                 allow_insecure_http: false,
                 login: None,
+                company: None,
             },
         );
         let error = pick(&["--profile", "local"], &Env::default(), &closed).unwrap_err();
@@ -833,6 +948,161 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("CAD_COMPANY_ID"));
+    }
+
+    // --- the company ---------------------------------------------------------
+
+    const ACME: &str = "00000000-0000-0000-0000-0000000000a1";
+    const OTHER: &str = "00000000-0000-0000-0000-0000000000a2";
+    const FLAGGED: &str = "00000000-0000-0000-0000-0000000000a3";
+
+    /// `profiles(&[])` with Acme as the company of `staging` and no company
+    /// for `production`.
+    fn profiles_with_a_company() -> ProfileSet {
+        let mut set = profiles(&[]);
+        let mut staging = set.get(&name("staging")).unwrap().clone();
+        staging.company = Some(crate::support::profiles::Company {
+            id: ACME.parse().unwrap(),
+            name: Some("Acme GmbH".to_owned()),
+        });
+        set.insert(name("staging"), staging);
+        set
+    }
+
+    fn company_of(
+        arguments: &[&str],
+        environment: &Env,
+        set: &ProfileSet,
+    ) -> Result<Option<(String, Option<String>, CompanySource)>, CliError> {
+        let cli = parse(arguments);
+        let selection = select(&cli.global, environment, set)?;
+        select_company(&cli.global, environment, set, &selection).map(|company| {
+            company.map(|company| (company.id.to_string(), company.name, company.source))
+        })
+    }
+
+    #[test]
+    fn the_company_is_the_flag_then_the_variable_then_the_profiles_then_none() {
+        let set = profiles_with_a_company();
+        let variable = Env::default().with("CAD_COMPANY_ID", OTHER);
+
+        assert_eq!(
+            company_of(&[], &Env::default(), &set).unwrap(),
+            Some((
+                ACME.to_owned(),
+                Some("Acme GmbH".to_owned()),
+                CompanySource::Profile
+            ))
+        );
+        // The variable beats the profile; it is a company the profile has no
+        // label for.
+        assert_eq!(
+            company_of(&[], &variable, &set).unwrap(),
+            Some((OTHER.to_owned(), None, CompanySource::Environment))
+        );
+        // The flag beats both.
+        assert_eq!(
+            company_of(&["--company-id", FLAGGED], &variable, &set).unwrap(),
+            Some((FLAGGED.to_owned(), None, CompanySource::Flag))
+        );
+        // The profile's own company by flag keeps the label it recorded, and
+        // the flag as its source.
+        assert_eq!(
+            company_of(&["--company-id", ACME], &Env::default(), &set).unwrap(),
+            Some((
+                ACME.to_owned(),
+                Some("Acme GmbH".to_owned()),
+                CompanySource::Flag
+            ))
+        );
+        // A profile without a company has none, and the platform's choice for
+        // the key is nowhere in this.
+        assert_eq!(
+            company_of(&["--profile", "production"], &Env::default(), &set).unwrap(),
+            None
+        );
+        assert_eq!(
+            company_of(&[], &Env::default(), &profiles(&[])).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn a_server_that_is_no_profiles_never_borrows_a_profiles_company() {
+        let set = profiles_with_a_company();
+        // `staging` is active and has a company, but this server is not its.
+        let foreign = Env::default().with("CAD_SERVER_URL", "https://custom.example.test");
+        assert_eq!(company_of(&[], &foreign, &set).unwrap(), None);
+        // The profile whose server it is lends it.
+        let own = Env::default().with("CAD_SERVER_URL", STAGING);
+        assert_eq!(
+            company_of(&[], &own, &set)
+                .unwrap()
+                .map(|company| company.0),
+            Some(ACME.to_owned())
+        );
+    }
+
+    #[test]
+    fn a_company_variable_that_is_not_a_uuid_is_an_error() {
+        let error = company_of(
+            &[],
+            &Env::default().with("CAD_COMPANY_ID", "acme"),
+            &profiles_with_a_company(),
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .starts_with("configuration error: CAD_COMPANY_ID is not a UUID"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_company_scoped_command_is_refused_without_a_company_naming_the_way_out() {
+        // With a profile.
+        let config = AppConfig::resolve(
+            &parse(&[]).global,
+            &credentials(),
+            &empty_store(),
+            &profiles(&[]),
+        )
+        .unwrap();
+        assert!(config.company().is_none());
+        let error = config.require_company().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "configuration error: no company is selected for profile staging; run `cad-cli use \
+             company <name|id>`, or pass --company-id or set CAD_COMPANY_ID"
+        );
+        assert_eq!(error.exit_code(), std::process::ExitCode::from(2));
+
+        // Without one: a server of no profile.
+        let environment = credentials().with("CAD_SERVER_URL", "https://custom.example.test");
+        let config = AppConfig::resolve(
+            &parse(&[]).global,
+            &environment,
+            &empty_store(),
+            &profiles(&[]),
+        )
+        .unwrap();
+        let error = config.require_company().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "configuration error: no company is selected; pass --company-id or set CAD_COMPANY_ID"
+        );
+        assert_eq!(error.exit_code(), std::process::ExitCode::from(2));
+
+        // With a company, nothing to refuse.
+        let config = AppConfig::resolve(
+            &parse(&[]).global,
+            &credentials(),
+            &empty_store(),
+            &profiles_with_a_company(),
+        )
+        .unwrap();
+        assert!(config.require_company().is_ok());
     }
 
     #[test]

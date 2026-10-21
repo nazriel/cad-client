@@ -38,7 +38,8 @@ const ENVIRONMENT: &[Variable] = &[
     ),
     Variable::new(
         "CAD_COMPANY_ID",
-        "Accessible company to act on when --company-id is not given",
+        "Accessible company to act on when --company-id is not given. It has precedence over \
+         the company of the profile",
     ),
     Variable::new(
         "CAD_CLI_KEYRING",
@@ -68,8 +69,12 @@ const EXAMPLES: &[Example] = &[
         "List the profiles and show which one commands use",
     ),
     Example::new(
-        "cad-cli --profile staging context show",
-        "Check which API key and company the CLI acts as, on another profile",
+        "cad-cli use --check",
+        "Check with the server who the CLI acts as and on which company",
+    ),
+    Example::new(
+        "cad-cli use company \"Acme GmbH\"",
+        "Choose the company the profile in use acts on",
     ),
     Example::new(
         "cad-cli company list --output json",

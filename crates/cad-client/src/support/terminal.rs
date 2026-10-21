@@ -91,6 +91,14 @@ pub(crate) trait Terminal: Send + Sync {
     /// [`Terminal::confirm`], `--yes` does not answer it.
     fn ask(&self, question: &str) -> Result<bool, CliError>;
 
+    /// Asks the person to pick one of `options` and returns its index. The
+    /// list can be filtered by typing.
+    ///
+    /// # Errors
+    ///
+    /// [`CliError::Cancelled`] when the person gives up with Esc or Ctrl-C.
+    fn select(&self, label: &str, options: &[String]) -> Result<usize, CliError>;
+
     /// Opens `url` in the user's browser. Returns whether a browser was
     /// started: on a machine with no display there is none to start.
     fn open_url(&self, url: &str) -> bool;
@@ -197,6 +205,13 @@ impl Terminal for ProcessTerminal {
         inquire::Confirm::new(question)
             .with_default(false)
             .prompt()
+            .map_err(prompt_error)
+    }
+
+    fn select(&self, label: &str, options: &[String]) -> Result<usize, CliError> {
+        inquire::Select::new(label, options.to_vec())
+            .raw_prompt()
+            .map(|chosen| chosen.index)
             .map_err(prompt_error)
     }
 
@@ -373,6 +388,10 @@ impl Terminal for SilentTerminal {
 
     fn ask(&self, _question: &str) -> Result<bool, CliError> {
         Ok(false)
+    }
+
+    fn select(&self, _label: &str, _options: &[String]) -> Result<usize, CliError> {
+        Err(CliError::Input("no terminal to ask on".to_owned()))
     }
 
     fn open_url(&self, _url: &str) -> bool {

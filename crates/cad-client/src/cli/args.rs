@@ -24,7 +24,7 @@ pub struct GlobalArgs {
     #[arg(long, global = true, value_hint = ValueHint::Url)]
     pub server_url: Option<String>,
 
-    /// Use another accessible company instead of the company from the API-key token.
+    /// Accessible company to act on, instead of the profile's (see `cad-cli use company`).
     #[arg(long, global = true, add = crate::completion::company_ids())]
     pub company_id: Option<CompanyId>,
 

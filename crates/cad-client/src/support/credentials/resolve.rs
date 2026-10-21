@@ -14,13 +14,26 @@
 
 use cad_api::ApiKeyV2Credentials;
 use secrecy::SecretString;
+use serde::Serialize;
 use std::fmt::Write as _;
 use uuid::Uuid;
 
-use super::{CredentialStore, StoredCredential};
+use super::{CredentialStore, Location, StoredCredential};
 use crate::config::Environment;
 use crate::error::CliError;
 use crate::support::profiles::ProfileName;
+
+/// Where the credentials a command uses came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Source {
+    /// `CAD_API_KEY` and `CAD_API_SECRET`.
+    Environment,
+    /// The login stored in the system keyring.
+    Keyring,
+    /// The login stored in the credentials file.
+    File,
+}
 
 /// The credentials a command will use, found once.
 ///
@@ -31,9 +44,14 @@ use crate::support::profiles::ProfileName;
 pub(crate) struct Resolved {
     key_id: Uuid,
     secret: Option<SecretString>,
+    source: Source,
 }
 
 impl Resolved {
+    pub(crate) const fn source(&self) -> Source {
+        self.source
+    }
+
     pub(crate) const fn key_id(&self) -> Uuid {
         self.key_id
     }
@@ -75,7 +93,7 @@ pub(crate) fn resolve(
         )));
     };
     let loaded = store.load(profile)?;
-    if let Some((credential, _)) = loaded.credential {
+    if let Some((credential, location)) = loaded.credential {
         if credential.origin() != origin {
             return Err(CliError::auth_config(format!(
                 "the login stored for profile {profile} is for {}, not {origin}; log in again \
@@ -85,9 +103,14 @@ pub(crate) fn resolve(
         }
         let key_id = credential.key_id();
         let StoredCredential::ApiKey { secret, .. } = credential;
+        let source = match location {
+            Location::Keyring => Source::Keyring,
+            Location::File(_) => Source::File,
+        };
         return Ok(Resolved {
             key_id,
             secret: Some(secret),
+            source,
         });
     }
     let mut message = format!(
@@ -110,5 +133,9 @@ fn from_environment(environment: &impl Environment) -> Result<Resolved, CliError
         .get("CAD_API_SECRET")
         .filter(|secret| !secret.is_empty())
         .map(SecretString::from);
-    Ok(Resolved { key_id, secret })
+    Ok(Resolved {
+        key_id,
+        secret,
+        source: Source::Environment,
+    })
 }

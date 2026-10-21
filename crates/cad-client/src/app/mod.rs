@@ -120,6 +120,11 @@ async fn execute(
     };
 
     let config = AppConfig::resolve(&cli.global, environment, store, &profiles.load()?)?;
+    // Refused before any request: the platform's own choice of company for
+    // the key is never used.
+    if online.needs_company() {
+        config.require_company()?;
+    }
     // Local preconditions are checked before the identity request so a typo
     // in a path does not cost a network round-trip to fail on.
     check_local_inputs(matches)?;

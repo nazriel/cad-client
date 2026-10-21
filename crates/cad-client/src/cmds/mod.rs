@@ -5,7 +5,6 @@ pub mod activity_group;
 pub mod benchmark;
 pub mod company;
 pub mod company_template;
-pub mod context;
 pub mod custom_field;
 pub mod custom_option;
 pub mod document;
@@ -57,7 +56,7 @@ const MAN_EXAMPLES: &[Example] = &[Example::new(
 /// Top-level `cad-cli` command.
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Show and switch the active profile, and log in.
+    /// Show and switch the active profile, log in, and choose the company.
     ///
     /// Without a subcommand it lists the profiles, sorted by name, with the
     /// server and the login of each. `active` marks the profile `use profile`
@@ -66,7 +65,8 @@ pub enum Command {
     /// `--server-url` or `CAD_SERVER_URL` picks another. It makes no request.
     ///
     /// `use profile <name>` creates, switches to, logs in to and forgets a
-    /// profile.
+    /// profile. `use company <name|id>` chooses the company the profile acts
+    /// on, and `use --check` shows, with the server, what a command would use.
     Use(r#use::Group),
     /// Manage the company's activity categories.
     ActivityCategory(activity_category::Group),
@@ -74,8 +74,6 @@ pub enum Command {
     ActivityGroup(activity_group::Group),
     /// Read and update the company benchmark.
     Benchmark(benchmark::Group),
-    /// Show the authenticated session context.
-    Context(context::Group),
     /// Inspect and create companies available to the current API key.
     Company(company::Group),
     /// Inspect reusable company templates available to the current API key.
@@ -137,7 +135,6 @@ impl Command {
             }
             Self::ActivityGroup(group) => Invocation::Online(OnlineCommand::ActivityGroup(group)),
             Self::Benchmark(group) => Invocation::Online(OnlineCommand::Benchmark(group)),
-            Self::Context(group) => Invocation::Online(OnlineCommand::Context(group)),
             Self::Company(group) => Invocation::Online(OnlineCommand::Company(group)),
             Self::CompanyTemplate(group) => {
                 Invocation::Online(OnlineCommand::CompanyTemplate(group))
@@ -225,7 +222,6 @@ pub(crate) enum OnlineCommand {
     ActivityCategory(activity_category::Group),
     ActivityGroup(activity_group::Group),
     Benchmark(benchmark::Group),
-    Context(context::Group),
     Company(company::Group),
     CompanyTemplate(company_template::Group),
     ReportingPeriod(reporting_period::Group),
@@ -238,6 +234,12 @@ pub(crate) enum OnlineCommand {
 }
 
 impl OnlineCommand {
+    /// Whether the command acts on a company, and so is refused when none is
+    /// selected. The session-level groups work on whatever the key can reach.
+    pub(crate) const fn needs_company(&self) -> bool {
+        !matches!(self, Self::Company(_) | Self::CompanyTemplate(_))
+    }
+
     pub(crate) async fn run(
         self,
         context: &CommandContext<'_>,
@@ -249,11 +251,6 @@ impl OnlineCommand {
             Self::Benchmark(group) => group.run(context, platform.scoped()?.client()).await,
             // Session-level commands neither prompt nor read local input, so
             // they ignore the [`CommandContext`].
-            Self::Context(group) => {
-                group
-                    .run(platform.connected(), platform.requested_company_id())
-                    .await
-            }
             Self::Company(group) => group.run(context, platform.connected()).await,
             Self::CompanyTemplate(group) => group.run(platform.connected()).await,
             Self::ReportingPeriod(group) => group.run(context, &platform.scoped()?).await,

@@ -282,18 +282,17 @@ fn cache_keys_isolate_servers_api_keys_companies_and_resources() {
         CacheKey::session("companies", "https://a.test/", API_KEY),
         CacheKey::session("companies", "https://b.test/", API_KEY),
         CacheKey::session("companies", "https://a.test/", other_key),
-        CacheKey::company("reporting-periods", "https://a.test/", API_KEY, None),
         CacheKey::company(
             "reporting-periods",
             "https://a.test/",
             API_KEY,
-            Some(CompanyId::from(COMPANY_ID)),
+            CompanyId::from(COMPANY_ID),
         ),
         CacheKey::company(
             "reporting-periods",
             "https://a.test/",
             API_KEY,
-            Some(CompanyId::from(OTHER_COMPANY_ID)),
+            CompanyId::from(OTHER_COMPANY_ID),
         ),
     ];
     for (index, key) in keys.iter().enumerate() {
@@ -375,6 +374,13 @@ fn completers_are_attached_to_the_company_and_reporting_period_ids() {
             "reporting-period {name}"
         );
     }
+    // The company `use company` takes is completed with the same companies.
+    let use_company = root
+        .find_subcommand("use")
+        .unwrap()
+        .find_subcommand("company")
+        .unwrap();
+    assert!(has_completer(use_company, "company"));
 }
 
 #[test]
@@ -639,6 +645,85 @@ async fn reporting_periods_follow_the_selected_company() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn reporting_periods_use_the_profiles_company_and_nothing_without_one() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(IDENTITY_PATH))
+        .and(header("X-CAD-Company-Id", OTHER_COMPANY_ID.to_string()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(identity(OTHER_COMPANY_ID)))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(REPORTING_PERIODS_PATH))
+        .and(header("X-CAD-Company-Id", OTHER_COMPANY_ID.to_string()))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!([period(
+                0x26,
+                "FY26",
+                "2026-01-01",
+                "2026-12-31"
+            )])),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let (store, profiles, _) = store_with_login(&server, dir.path());
+    let environment = FakeEnvironment::default()
+        .with("XDG_CACHE_HOME", dir.path().join("cache").to_string_lossy());
+    let line = words(&["cad-cli", "reporting-period", "get"]);
+    let run = || {
+        candidates(
+            Resource::ReportingPeriods,
+            &line,
+            &environment,
+            &store,
+            &profiles,
+            SystemTime::now(),
+        )
+    };
+
+    // The profile has no company: there is nothing to offer, and nothing was
+    // asked of the platform, whose own choice of company is not used.
+    assert_eq!(tokio::task::block_in_place(run), Vec::<Candidate>::new());
+    assert!(server.received_requests().await.unwrap().is_empty());
+
+    let mut set = profiles.load().unwrap();
+    let mut work = set.get(&profile_name("work")).unwrap().clone();
+    work.company = Some(crate::support::profiles::Company {
+        id: OTHER_COMPANY_ID.into(),
+        name: None,
+    });
+    set.insert(profile_name("work"), work);
+    profiles.save(&set).unwrap();
+
+    assert_eq!(
+        tokio::task::block_in_place(run),
+        [Candidate::new(
+            Uuid::from_u128(0x26).to_string(),
+            Some("FY26 (2026-01-01 to 2026-12-31)".to_owned())
+        )]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn reporting_periods_offer_nothing_when_no_company_is_selected_at_all() {
+    let server = platform().await;
+    let dir = tempfile::tempdir().unwrap();
+
+    let values = complete(
+        Resource::ReportingPeriods,
+        server_words(&server, &["reporting-period", "get"]),
+        FakeEnvironment::configured(dir.path()),
+    )
+    .await;
+
+    assert_eq!(values, Vec::<Candidate>::new());
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_failing_platform_falls_back_to_the_stale_list() {
     let server = platform().await;
     Mock::given(method("GET"))
@@ -801,6 +886,7 @@ fn store_with_login(
             url: origin,
             allow_insecure_http: true,
             login: None,
+            company: None,
         },
     );
     set.activate(profile_name("work"));
@@ -901,6 +987,7 @@ fn without_a_stored_login_nothing_is_completed_and_the_keyring_is_read_once() {
             url: "https://staging.carbonaltdelete.eu".to_owned(),
             allow_insecure_http: false,
             login: None,
+            company: None,
         },
     );
     set.activate(profile_name("staging"));
@@ -995,6 +1082,7 @@ async fn the_profile_flag_and_the_server_it_picks_complete_with_that_profiles_lo
             url: "https://other.example.test".to_owned(),
             allow_insecure_http: false,
             login: None,
+            company: None,
         },
     );
     set.activate(profile_name("other"));

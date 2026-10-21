@@ -47,8 +47,8 @@ async fn list(resource: Resource, config: AppConfig) -> Result<Vec<Candidate>, C
         Resource::Companies => companies(platform.connected().companies().list().await?),
         // Reporting periods belong to one company, so they need the
         // company-scoped client (`--company-id`, `CAD_COMPANY_ID`, or the
-        // API key's own company); the SDK's typestate offers the call only
-        // on that client.
+        // profile's company); the SDK's typestate offers the call only on
+        // that client.
         Resource::ReportingPeriods => {
             let sdk = platform.scoped()?;
             reporting_periods(sdk.client().reporting_periods().list().await?)

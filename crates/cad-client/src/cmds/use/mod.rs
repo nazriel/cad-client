@@ -9,6 +9,8 @@
 //! Each returns a small JSON value in the selected output format; prompts and
 //! the outcome go to stderr.
 
+mod check;
+mod company;
 mod forget;
 mod list;
 mod login;
@@ -16,13 +18,14 @@ mod profile;
 #[cfg(test)]
 mod tests;
 
-use cad_api::ids::UserId;
+use cad_api::ids::{CompanyId, UserId};
 use chrono::{DateTime, Utc};
 use clap::{Args, Subcommand};
 use serde::Serialize;
 use serde_json::Value;
 use uuid::Uuid;
 
+use self::company::CompanyChoice;
 use crate::app::context::CommandContext;
 use crate::cli::GlobalArgs;
 use crate::cli::help::{self, Example};
@@ -38,6 +41,25 @@ const USE_EXAMPLES: &[Example] = &[
         "List the profiles, the active one, and the one commands use now",
     ),
     Example::new("cad-cli use --output json", "The same, as JSON"),
+    Example::new(
+        "cad-cli use --check",
+        "Check with the server who the next command would act as, and on which company",
+    ),
+];
+
+const COMPANY_EXAMPLES: &[Example] = &[
+    Example::new(
+        "cad-cli use company \"Acme GmbH\"",
+        "Act on a company by its name, from now on, with the profile in use",
+    ),
+    Example::new(
+        "cad-cli use company 00000000-0000-0000-0000-000000000001",
+        "Act on a company by its ID",
+    ),
+    Example::new(
+        "cad-cli --profile staging use company \"Acme GmbH\"",
+        "Choose the company of another profile, leaving the active profile as it is",
+    ),
 ];
 
 const PROFILE_EXAMPLES: &[Example] = &[
@@ -69,10 +91,19 @@ const PROFILE_EXAMPLES: &[Example] = &[
 
 /// Arguments of the `use` command.
 #[derive(Debug, Args)]
-#[command(after_help = help::examples(USE_EXAMPLES))]
+#[command(after_help = help::examples(USE_EXAMPLES), args_conflicts_with_subcommands = true)]
 pub struct Group {
     #[command(subcommand)]
     pub(crate) command: Option<Command>,
+
+    /// Check the selection with the server instead of listing the profiles.
+    ///
+    /// It resolves the profile, the server, the login and the company the way
+    /// a command does, connects once, and prints who the login is for and which
+    /// company is selected, with the reason for each. A missing company is
+    /// reported, not an error.
+    #[arg(long)]
+    pub(crate) check: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -99,6 +130,27 @@ pub(crate) enum Command {
     /// `CAD_API_KEY` and `CAD_API_SECRET` take precedence over a stored login.
     #[command(after_help = help::examples(PROFILE_EXAMPLES))]
     Profile(ProfileArgs),
+    /// Choose the company the profile in use acts on.
+    ///
+    /// The company is given by its name, matched exactly, ignoring case and
+    /// surrounding spaces, or by its ID. A name several companies share is
+    /// refused with their IDs. The company must be one the login can act on:
+    /// it is checked with the server before it is saved.
+    ///
+    /// Commands that act on a company use the profile's company, unless
+    /// `--company-id` or `CAD_COMPANY_ID` names another. Without any, they
+    /// refuse to run. This changes the profile for every shell; use
+    /// `--company-id` for a single command.
+    #[command(after_help = help::examples(COMPANY_EXAMPLES))]
+    Company(CompanyArgs),
+}
+
+/// Arguments of `cad-cli use company`.
+#[derive(Debug, Args)]
+pub(crate) struct CompanyArgs {
+    /// Name or ID of the company.
+    #[arg(value_name = "COMPANY", add = crate::completion::company_ids())]
+    pub(crate) company: CompanyChoice,
 }
 
 /// Arguments of `cad-cli use profile`.
@@ -168,6 +220,8 @@ pub(crate) struct ProfileRow {
     pub(crate) key_id: Option<Uuid>,
     pub(crate) storage: Option<Place>,
     pub(crate) stored_at: Option<DateTime<Utc>>,
+    pub(crate) company_id: Option<CompanyId>,
+    pub(crate) company_name: Option<String>,
 }
 
 impl ProfileRow {
@@ -183,6 +237,11 @@ impl ProfileRow {
             key_id: login.map(|login| login.key_id),
             storage: login.map(|login| login.storage),
             stored_at: login.map(|login| login.stored_at),
+            company_id: profile.company.as_ref().map(|company| company.id),
+            company_name: profile
+                .company
+                .as_ref()
+                .and_then(|company| company.name.clone()),
         }
     }
 
@@ -212,12 +271,21 @@ impl Group {
         profiles: &ProfileStore,
     ) -> Result<Report, CliError> {
         match self.command {
+            None if self.check => check::run(context, global, environment, store, profiles).await,
             None => list::run(global, environment, profiles),
             Some(Command::Profile(args)) => {
                 profile::run(args, context, global, environment, store, profiles).await
             }
+            Some(Command::Company(args)) => {
+                company::run(args, context, global, environment, store, profiles).await
+            }
         }
     }
+}
+
+/// What a profile with no company is told.
+fn no_company() -> String {
+    "no company is selected; run `cad-cli use company <name|id>`".to_owned()
 }
 
 /// The page where API keys are created, on the server's own origin. The path

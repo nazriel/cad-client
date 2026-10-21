@@ -27,6 +27,9 @@ pub(super) struct Options {
 pub(super) struct Outcome {
     pub(super) login: Login,
     pub(super) messages: Vec<(StatusKind, String)>,
+    /// The session the login was checked with, for whatever else the login
+    /// needs to ask.
+    pub(super) client: Client<Connected>,
 }
 
 /// Logs `profile` in to `server`: asks for the key, checks it with the server,
@@ -120,7 +123,11 @@ pub(super) async fn run(
                 .to_owned(),
         ));
     }
-    Ok(Outcome { login, messages })
+    Ok(Outcome {
+        login,
+        messages,
+        client,
+    })
 }
 
 /// Authenticates against `server`, so the identity request runs.

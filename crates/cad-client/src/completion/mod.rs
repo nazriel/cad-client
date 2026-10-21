@@ -39,7 +39,7 @@ use clap_complete::{CompleteEnv, Shell};
 use self::cache::{Cache, CacheKey, Candidate, Network};
 use crate::cli::{Cli, GlobalArgs};
 use crate::config::{
-    AppConfig, Environment, ProcessEnvironment, resolve_company_id, resolve_credentials, select,
+    AppConfig, Environment, ProcessEnvironment, resolve_credentials, select, select_company,
 };
 use crate::support::credentials::CredentialStore;
 use crate::support::profiles::ProfileStore;
@@ -154,7 +154,7 @@ impl EnvCompleter for AutoloadableZsh {
     }
 }
 
-/// Completes `--company-id` with the companies the API key can access.
+/// Completes a company ID with the companies the API key can access.
 pub(crate) fn company_ids() -> ArgValueCompleter {
     ArgValueCompleter::new(|current: &OsStr| complete(Resource::Companies, current))
 }
@@ -254,15 +254,22 @@ pub(crate) fn candidates(
         return Vec::new();
     };
     let api_key_id = resolved.key_id();
-    let server = selection.server;
-    let origin = server.base_url().as_str().to_owned();
+    let origin = selection.server.base_url().as_str().to_owned();
     let origin = origin.as_str();
-    let key = match resource {
-        Resource::Companies => CacheKey::session(resource.name(), origin, api_key_id),
-        Resource::ReportingPeriods => match resolve_company_id(&global, environment) {
-            Ok(company) => CacheKey::company(resource.name(), origin, api_key_id, company),
-            Err(_) => return Vec::new(),
-        },
+    // Reporting periods belong to the selected company; without one there is
+    // nothing to offer, as there is no command to complete them for.
+    let company = match resource {
+        Resource::Companies => None,
+        Resource::ReportingPeriods => {
+            match select_company(&global, environment, &profiles, &selection) {
+                Ok(Some(company)) => Some(company),
+                Ok(None) | Err(_) => return Vec::new(),
+            }
+        }
+    };
+    let key = match &company {
+        None => CacheKey::session(resource.name(), origin, api_key_id),
+        Some(company) => CacheKey::company(resource.name(), origin, api_key_id, company.id),
     };
     let network = if offline(environment) {
         Network::Disabled
@@ -271,7 +278,7 @@ pub(crate) fn candidates(
     };
     let cache = Cache::from_environment(environment);
     cache::lookup(cache.as_ref(), &key, network, now, || {
-        let config = AppConfig::resolve_with(&global, environment, server, resolved).ok()?;
+        let config = AppConfig::resolve_with(selection, resolved, company).ok()?;
         lookup::fetch(resource, config)
     })
 }

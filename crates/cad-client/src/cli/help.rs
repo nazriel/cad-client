@@ -156,7 +156,7 @@ mod tests {
             &[Variable::new("CAD_PROFILE", "Select a profile")],
             &[
                 Example::new("cad-cli company list", "List companies"),
-                Example::new("cad-cli context show", "Show the session"),
+                Example::new("cad-cli use --check", "Show the session"),
             ],
         );
 
@@ -179,7 +179,7 @@ mod tests {
                             "List companies".to_owned()
                         ),
                         (
-                            "cad-cli context show".to_owned(),
+                            "cad-cli use --check".to_owned(),
                             "Show the session".to_owned()
                         ),
                     ],

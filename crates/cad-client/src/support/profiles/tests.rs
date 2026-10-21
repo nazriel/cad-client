@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use super::{Login, Profile, ProfileName, ProfileSet, ProfileStore};
+use super::{Company, Login, Profile, ProfileName, ProfileSet, ProfileStore};
 use crate::error::CliError;
 use crate::support::credentials::Place;
 
@@ -34,6 +34,7 @@ fn profile(url: &str) -> Profile {
         url: url.to_owned(),
         allow_insecure_http: false,
         login: None,
+        company: None,
     }
 }
 
@@ -169,6 +170,10 @@ fn a_set_round_trips_in_the_documented_shape() {
     let mut set = ProfileSet::default();
     let mut production = profile("https://app.carbonaltdelete.eu");
     production.login = Some(login());
+    production.company = Some(Company {
+        id: Uuid::from_u128(0xcc).into(),
+        name: Some("Acme GmbH".to_owned()),
+    });
     set.insert(name("production"), production);
     let mut local = profile("http://localhost:5001");
     local.allow_insecure_http = true;
@@ -193,7 +198,8 @@ fn a_set_round_trips_in_the_documented_shape() {
                         "email": "jane@example.test",
                         "storage": "keyring",
                         "storedAt": "2026-10-21T12:00:00Z"
-                    }
+                    },
+                    "company": {"id": Uuid::from_u128(0xcc), "name": "Acme GmbH"}
                 }
             }
         })
@@ -205,6 +211,26 @@ fn a_set_round_trips_in_the_documented_shape() {
         .map(|entry| entry.unwrap().file_name())
         .collect();
     assert_eq!(names, ["profiles.json"]);
+}
+
+#[test]
+fn a_company_is_optional_and_its_name_may_be_null() {
+    let set: ProfileSet = serde_json::from_value(json!({
+        "version": 1,
+        "profiles": {
+            "a": {"url": "https://a.test"},
+            "b": {"url": "https://b.test", "company": {"id": Uuid::from_u128(0xcc), "name": null}}
+        }
+    }))
+    .unwrap();
+    assert_eq!(set.get(&name("a")).unwrap().company, None);
+    let company = set.get(&name("b")).unwrap().company.clone().unwrap();
+    assert_eq!(company.name, None);
+    assert_eq!(company.label(), Uuid::from_u128(0xcc).to_string());
+    assert_eq!(
+        serde_json::to_value(&company).unwrap(),
+        json!({"id": Uuid::from_u128(0xcc), "name": null})
+    );
 }
 
 #[test]
@@ -222,7 +248,7 @@ fn a_login_without_an_email_is_written_as_null_and_read_back() {
 fn fields_this_version_does_not_know_are_tolerated() {
     let set: ProfileSet = serde_json::from_value(json!({
         "version": 1,
-        "profiles": {"a": {"url": "https://a.test", "company": "later"}}
+        "profiles": {"a": {"url": "https://a.test", "theme": "later"}}
     }))
     .unwrap();
     assert!(set.get(&name("a")).is_some());
