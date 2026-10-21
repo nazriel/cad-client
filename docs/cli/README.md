@@ -39,7 +39,7 @@ Every command accepts these options.
 | `--company-id <COMPANY_ID>` | Accessible company to act on, instead of the profile's (see `cad-cli use company`). |
 | `--allow-insecure-http` | Permit HTTP for localhost/loopback mock servers. |
 | `--request-timeout <REQUEST_TIMEOUT>` | Total time allowed for one API request, including its response body. Default: `60s`. |
-| `--output <OUTPUT>` | Select human-readable or machine-readable output. Values: `table`, `json`, `jsonl`. Default: `table`. |
+| `--output <OUTPUT>` | Select human-readable or machine-readable output. With json or jsonl a failure is one JSON object on stderr; usage errors from the argument parser stay text. Values: `table`, `json`, `jsonl`. Default: `table`. |
 | `--yes` | Skip confirmation prompts for consequential operations. |
 
 ## Environment
