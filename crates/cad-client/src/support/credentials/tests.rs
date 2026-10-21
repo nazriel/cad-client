@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use cad_api::ServerConfig;
+use cad_api::{ServerConfig, ids::UserId};
 use chrono::{DateTime, Utc};
 use secrecy::{ExposeSecret, SecretString};
 use serde_json::{Value, json};
@@ -24,7 +24,7 @@ const ORIGIN: &str = "https://staging.carbonaltdelete.eu";
 const OTHER_ORIGIN: &str = "https://app.carbonaltdelete.eu";
 const KEY_ID: Uuid = Uuid::from_u128(0xaa);
 const OTHER_KEY_ID: Uuid = Uuid::from_u128(0xab);
-const USER_ID: Uuid = Uuid::from_u128(0xbb);
+const USER_ID: UserId = UserId::from_uuid(Uuid::from_u128(0xbb));
 const SECRET: &str = "cad_aks_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_AbCde";
 const OTHER_SECRET: &str = "cad_aks_ZyXwVuTsRqPoNmLkJiHgFeDcBa9876543210-_ZyXwV";
 

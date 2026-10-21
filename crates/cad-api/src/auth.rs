@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::error::{Error, Result};
-use crate::ids::CompanyId;
+use crate::ids::{CompanyId, UserId};
 
 /// Credentials accepted by the machine API-key authentication scheme.
 pub struct ApiKeyV2Credentials {
@@ -119,7 +119,7 @@ pub struct SessionContext {
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]
 pub struct MachinePrincipal {
-    pub user_id: Uuid,
+    pub user_id: UserId,
     pub affiliated_company_id: CompanyId,
 }
 

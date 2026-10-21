@@ -955,7 +955,7 @@ async fn logout_leaves_other_origins_alone_and_warns_about_the_environment() {
             &crate::support::credentials::StoredCredential::api_key(
                 Uuid::from_u128(9),
                 SecretString::from(SECRET),
-                Uuid::from_u128(10),
+                Uuid::from_u128(10).into(),
                 chrono::Utc::now(),
             ),
         )

@@ -18,6 +18,7 @@ pub mod inventory_lines;
 pub mod organizational_units;
 pub mod reporting_periods;
 pub mod reports;
+pub mod users;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

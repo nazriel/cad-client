@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use cad_api::ids::CompanyId;
+use cad_api::ids::{CompanyId, UserId};
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::Serialize;
 use uuid::Uuid;
@@ -25,7 +25,7 @@ struct StatusResult {
     /// The credentials file, when that is the source.
     path: Option<PathBuf>,
     key_id: Uuid,
-    user_id: Uuid,
+    user_id: UserId,
     affiliated_company_id: CompanyId,
     resolved_company_id: Option<CompanyId>,
     /// When the login was stored; `null` for the environment.

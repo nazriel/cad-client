@@ -770,7 +770,7 @@ fn store_with_login(
             &StoredCredential::api_key(
                 API_KEY,
                 secrecy::SecretString::from("cad_aks_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_AbCde"),
-                Uuid::nil(),
+                Uuid::nil().into(),
                 chrono::Utc::now(),
             ),
         )

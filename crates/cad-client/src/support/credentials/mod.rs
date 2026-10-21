@@ -22,7 +22,7 @@ mod tests;
 
 use std::path::{Path, PathBuf};
 
-use cad_api::ServerConfig;
+use cad_api::{ServerConfig, ids::UserId};
 use chrono::{DateTime, SubsecRound, Utc};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize, Serializer};
@@ -68,7 +68,7 @@ pub(crate) enum StoredCredential {
         key_id: Uuid,
         #[serde(serialize_with = "expose_secret")]
         secret: SecretString,
-        user_id: Uuid,
+        user_id: UserId,
         stored_at: DateTime<Utc>,
     },
 }
@@ -85,7 +85,7 @@ impl StoredCredential {
     pub(crate) fn api_key(
         key_id: Uuid,
         secret: SecretString,
-        user_id: Uuid,
+        user_id: UserId,
         stored_at: DateTime<Utc>,
     ) -> Self {
         Self::ApiKey {

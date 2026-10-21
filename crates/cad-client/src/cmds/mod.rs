@@ -235,13 +235,9 @@ impl OnlineCommand {
         platform: &Platform,
     ) -> Result<Value, CliError> {
         match self {
-            Self::ActivityCategory(group) => {
-                group.run(context, platform.scoped().await?.client()).await
-            }
-            Self::ActivityGroup(group) => {
-                group.run(context, platform.scoped().await?.client()).await
-            }
-            Self::Benchmark(group) => group.run(context, platform.scoped().await?.client()).await,
+            Self::ActivityCategory(group) => group.run(context, platform.scoped()?.client()).await,
+            Self::ActivityGroup(group) => group.run(context, platform.scoped()?.client()).await,
+            Self::Benchmark(group) => group.run(context, platform.scoped()?.client()).await,
             // Session-level commands neither prompt nor read local input, so
             // they ignore the [`CommandContext`].
             Self::Context(group) => {
@@ -251,23 +247,19 @@ impl OnlineCommand {
             }
             Self::Company(group) => group.run(context, platform.connected()).await,
             Self::CompanyTemplate(group) => group.run(platform.connected()).await,
-            Self::ReportingPeriod(group) => group.run(context, &platform.scoped().await?).await,
-            Self::InventoryLine(group) => {
-                group.run(context, platform.scoped().await?.client()).await
-            }
+            Self::ReportingPeriod(group) => group.run(context, &platform.scoped()?).await,
+            Self::InventoryLine(group) => group.run(context, platform.scoped()?.client()).await,
             Self::OrganizationalUnit(group) => {
-                group.run(context, platform.scoped().await?.client()).await
+                group.run(context, platform.scoped()?.client()).await
             }
             Self::Document(group) => {
-                let sdk = platform.scoped().await?;
+                let sdk = platform.scoped()?;
                 let company_id = sdk.company_id();
                 group.run(context, &sdk, company_id).await
             }
-            Self::CustomField(group) => group.run(context, platform.scoped().await?.client()).await,
-            Self::CustomOption(group) => {
-                group.run(context, platform.scoped().await?.client()).await
-            }
-            Self::Report(group) => group.run(context, &platform.scoped().await?).await,
+            Self::CustomField(group) => group.run(context, platform.scoped()?.client()).await,
+            Self::CustomOption(group) => group.run(context, platform.scoped()?.client()).await,
+            Self::Report(group) => group.run(context, &platform.scoped()?).await,
         }
     }
 }

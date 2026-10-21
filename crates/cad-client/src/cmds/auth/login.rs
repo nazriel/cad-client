@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use cad_api::ApiKeyV2Credentials;
+use cad_api::ids::UserId;
 use chrono::Utc;
 use secrecy::{ExposeSecret, SecretString};
 use serde::Serialize;
@@ -25,7 +26,7 @@ use crate::support::terminal::{StatusKind, Terminal};
 struct LoginResult {
     origin: String,
     key_id: Uuid,
-    user_id: Uuid,
+    user_id: UserId,
     affiliated_company_id: cad_api::ids::CompanyId,
     storage: Place,
     /// The credentials file, when that is where the key went.

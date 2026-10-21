@@ -1,5 +1,5 @@
 use cad_api::ids::CompanyId;
-use cad_api::{Client, Connected};
+use cad_api::{Client, CompanyScoped, Connected};
 
 use crate::adapters::sdk::SdkAdapter;
 use crate::config::AppConfig;
@@ -7,21 +7,22 @@ use crate::error::CliError;
 
 /// The authenticated platform handed to every online command.
 ///
-/// Company scoping is resolved on demand rather than by the bootstrap. A
-/// command that needs a company asks for it and pays for the round trip; a
-/// session-level command never does. Scoping is a real network operation, so
-/// asking late does not invent an error path — it moves an existing one next to
-/// the command that depends on it.
+/// When a company was requested, the one identity request that authenticates
+/// the key also selects that company, and `scoped()` hands it out without
+/// another request. Without a requested company the key's own company is
+/// adopted on demand, which costs no request either; a session-level command
+/// never needs one.
 pub(crate) struct Platform {
     connected: Client<Connected>,
-    company_id: Option<CompanyId>,
+    /// The client the identity request scoped, when a company was requested.
+    requested: Option<Client<CompanyScoped>>,
 }
 
 impl Platform {
-    pub(crate) const fn new(connected: Client<Connected>, company_id: Option<CompanyId>) -> Self {
+    const fn new(connected: Client<Connected>, requested: Option<Client<CompanyScoped>>) -> Self {
         Self {
             connected,
-            company_id,
+            requested,
         }
     }
 
@@ -34,11 +35,17 @@ impl Platform {
     /// # Errors
     ///
     /// Returns [`CliError`] if the HTTP client cannot be built or the identity
-    /// request fails.
+    /// request fails, which includes a requested company the key cannot use.
     pub(crate) async fn connect(config: AppConfig) -> Result<Self, CliError> {
         let (server, credentials, company_id) = config.into_parts();
-        let connected = Client::new(server)?.connect(credentials).await?;
-        Ok(Self::new(connected, company_id))
+        let client = Client::new(server)?;
+        match company_id {
+            Some(company_id) => {
+                let scoped = client.connect_for_company(credentials, company_id).await?;
+                Ok(Self::new(scoped.unscoped(), Some(scoped)))
+            }
+            None => Ok(Self::new(client.connect(credentials).await?, None)),
+        }
     }
 
     pub(crate) const fn connected(&self) -> &Client<Connected> {
@@ -46,22 +53,22 @@ impl Platform {
     }
 
     /// The company selected on the command line, if one was.
-    pub(crate) const fn requested_company_id(&self) -> Option<CompanyId> {
-        self.company_id
+    pub(crate) fn requested_company_id(&self) -> Option<CompanyId> {
+        self.requested.as_ref().map(Client::company_id)
     }
 
     /// Binds the session to a company and wraps it for the domain ports.
     ///
-    /// An explicit `--company-id` switches to that company; otherwise the
-    /// company the machine identity selected for the key is adopted.
+    /// An explicit `--company-id` is the company the identity request already
+    /// selected; otherwise the company the machine identity selected for the
+    /// key is adopted.
     ///
     /// # Errors
     ///
-    /// Returns [`CliError`] if the switch fails or the identity selected no
-    /// company.
-    pub(crate) async fn scoped(&self) -> Result<SdkAdapter, CliError> {
-        let scoped = match self.company_id {
-            Some(company_id) => self.connected.for_company(company_id).await?,
+    /// Returns [`CliError`] if the identity selected no company.
+    pub(crate) fn scoped(&self) -> Result<SdkAdapter, CliError> {
+        let scoped = match &self.requested {
+            Some(scoped) => scoped.clone(),
             None => self.connected.clone().scope_current_company()?,
         };
         Ok(SdkAdapter::new(scoped))

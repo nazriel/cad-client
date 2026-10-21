@@ -50,7 +50,7 @@ async fn list(resource: Resource, config: AppConfig) -> Result<Vec<Candidate>, C
         // API key's own company); the SDK's typestate offers the call only
         // on that client.
         Resource::ReportingPeriods => {
-            let sdk = platform.scoped().await?;
+            let sdk = platform.scoped()?;
             reporting_periods(sdk.client().reporting_periods().list().await?)
         }
     })

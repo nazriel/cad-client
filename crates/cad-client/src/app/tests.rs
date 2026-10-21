@@ -1026,6 +1026,241 @@ async fn an_empty_collection_is_reported_as_a_warning() {
     assert_eq!(terminal.stdout().trim(), "[]");
 }
 
+/// Mounts an identity endpoint that resolves the company named by
+/// `X-CAD-Company-Id`, as the platform does for an accessible company.
+async fn company_selecting_server() -> MockServer {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(IDENTITY_PATH))
+        .respond_with(|request: &wiremock::Request| {
+            let selected = request
+                .headers
+                .get("X-CAD-Company-Id")
+                .and_then(|value| value.to_str().ok())
+                .map_or_else(|| Uuid::from_u128(1).to_string(), str::to_owned);
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "principal": {
+                    "userId": Uuid::nil(),
+                    "affiliatedCompanyId": COMPANY_ID
+                },
+                "companySelection": {
+                    "resolvedCompanyId": selected,
+                    "source": "HEADER"
+                }
+            }))
+        })
+        .mount(&server)
+        .await;
+    server
+}
+
+#[tokio::test]
+async fn a_company_scoped_command_with_company_id_makes_one_identity_request() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(IDENTITY_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "principal": {
+                "userId": Uuid::nil(),
+                "affiliatedCompanyId": COMPANY_ID
+            },
+            "companySelection": {
+                "resolvedCompanyId": COMPANY_ID,
+                "source": "HEADER"
+            }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(ACTIVITY_GROUPS_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let terminal = FakeTerminal::default();
+
+    run_cli(
+        &[
+            "cad-cli",
+            "--server-url",
+            &server.uri(),
+            "--allow-insecure-http",
+            "--company-id",
+            &COMPANY_ID.to_string(),
+            "--output",
+            "json",
+            "activity-group",
+            "list",
+        ],
+        &credentials(),
+        &terminal,
+    )
+    .await
+    .expect("a scoped command with --company-id should succeed");
+
+    let requests = server.received_requests().await.expect("recorded requests");
+    assert_eq!(requests.len(), 2);
+    for request in &requests {
+        assert_eq!(
+            request
+                .headers
+                .get("X-CAD-Company-Id")
+                .and_then(|value| value.to_str().ok()),
+            Some(COMPANY_ID.to_string().as_str()),
+            "{} {}",
+            request.method,
+            request.url.path()
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_session_level_command_with_company_id_sends_no_company_header_on_its_own_request() {
+    let server = company_selecting_server().await;
+    Mock::given(method("GET"))
+        .and(path(COMPANIES_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let terminal = FakeTerminal::default();
+
+    run_cli(
+        &[
+            "cad-cli",
+            "--server-url",
+            &server.uri(),
+            "--allow-insecure-http",
+            "--company-id",
+            &COMPANY_ID.to_string(),
+            "--output",
+            "json",
+            "company",
+            "list",
+        ],
+        &credentials(),
+        &terminal,
+    )
+    .await
+    .expect("company list should succeed");
+
+    let requests = server.received_requests().await.expect("recorded requests");
+    assert_eq!(
+        request_paths(&server).await,
+        [
+            format!("GET {IDENTITY_PATH}"),
+            format!("GET {COMPANIES_PATH}")
+        ]
+    );
+    assert!(requests[0].headers.contains_key("X-CAD-Company-Id"));
+    assert!(
+        !requests[1].headers.contains_key("X-CAD-Company-Id"),
+        "the session-level request carries no company"
+    );
+}
+
+#[tokio::test]
+async fn a_rejected_key_with_company_id_exits_with_the_authentication_code() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(IDENTITY_PATH))
+        .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({"msg": "no"})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let terminal = FakeTerminal::default();
+
+    let error = run_cli(
+        &[
+            "cad-cli",
+            "--server-url",
+            &server.uri(),
+            "--allow-insecure-http",
+            "--company-id",
+            &COMPANY_ID.to_string(),
+            "activity-group",
+            "list",
+        ],
+        &credentials(),
+        &terminal,
+    )
+    .await
+    .expect_err("a rejected key must fail");
+
+    assert!(
+        matches!(error, CliError::Authentication { .. }),
+        "{error:?}"
+    );
+    assert_eq!(error.exit_code(), std::process::ExitCode::from(3));
+}
+
+#[tokio::test]
+async fn a_company_refused_with_a_403_with_company_id_exits_with_the_api_code() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(IDENTITY_PATH))
+        .respond_with(ResponseTemplate::new(403).set_body_json(serde_json::json!({"msg": "no"})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let terminal = FakeTerminal::default();
+
+    let error = run_cli(
+        &[
+            "cad-cli",
+            "--server-url",
+            &server.uri(),
+            "--allow-insecure-http",
+            "--company-id",
+            &COMPANY_ID.to_string(),
+            "activity-group",
+            "list",
+        ],
+        &credentials(),
+        &terminal,
+    )
+    .await
+    .expect_err("a refused company must fail");
+
+    assert!(matches!(error, CliError::Api { .. }), "{error:?}");
+    assert_eq!(error.exit_code(), std::process::ExitCode::from(4));
+    assert!(error.to_string().contains("HTTP 403"));
+}
+
+#[tokio::test]
+async fn a_company_the_platform_resolves_differently_fails_as_an_api_error() {
+    // The identity answers for its own company, whatever was requested.
+    let server = mock_server().await;
+    let other = Uuid::from_u128(0x99);
+    let terminal = FakeTerminal::default();
+
+    let error = run_cli(
+        &[
+            "cad-cli",
+            "--server-url",
+            &server.uri(),
+            "--allow-insecure-http",
+            "--company-id",
+            &other.to_string(),
+            "activity-group",
+            "list",
+        ],
+        &credentials(),
+        &terminal,
+    )
+    .await
+    .expect_err("an unresolved company must fail");
+
+    assert!(matches!(error, CliError::Api { .. }), "{error:?}");
+    assert_eq!(error.exit_code(), std::process::ExitCode::from(4));
+    assert!(error.to_string().contains(&other.to_string()));
+    assert_eq!(
+        request_paths(&server).await,
+        [format!("GET {IDENTITY_PATH}")]
+    );
+}
+
 #[tokio::test]
 async fn missing_credentials_fail_before_any_request() {
     let terminal = FakeTerminal::default();
@@ -1155,7 +1390,7 @@ fn store_with_login(
             &StoredCredential::api_key(
                 Uuid::from_u128(0xaa),
                 secrecy::SecretString::from("cad_aks_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_AbCde"),
-                Uuid::nil(),
+                Uuid::nil().into(),
                 chrono::Utc::now(),
             ),
         )
