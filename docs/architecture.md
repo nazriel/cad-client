@@ -25,6 +25,32 @@ must turn protocol details into domain semantics. For example, a singleton
 endpoint that serializes as a one-element array remains an implementation
 detail; the public SDK method returns one resource or a protocol error.
 
+#### TLS
+
+HTTPS is rustls on the aws-lc-rs crypto provider, whose default key exchange
+(with rustls' `prefer-post-quantum` feature) offers the hybrid post-quantum
+`X25519MLKEM768` group first. `reqwest` is compiled with
+`rustls-tls-webpki-roots-no-provider`: it builds its own rustls configuration
+with Mozilla's root store, TLS 1.2 and 1.3, but takes the crypto provider from
+rustls' process default and panics ("No provider set") when none is
+installed.
+
+`cad_api::tls::install_crypto_provider()` (`src/tls/mod.rs`) installs aws-lc-rs
+as that default, only if no provider is installed yet, and is idempotent.
+`Transport` calls it before building its clients, so an SDK consumer needs no
+setup; `cad-cli`'s `main` calls it first thing, so every client in the binary
+gets it. Clients themselves are plain `reqwest::Client::builder()`.
+
+It never replaces a host application's provider. The trade-off: a host that
+installed another one (ring, say) keeps it, and the SDK's connections then
+negotiate without post-quantum key exchange.
+
+`src/tls/tests.rs` pins the key exchange order and the first ClientHello's
+key share, and an ignored test checks the negotiated group against the
+production host. `tests/crypto_provider.rs` and `tests/host_crypto_provider.rs`
+each run in a process of their own, because the default is process-wide: an SDK
+client installs aws-lc-rs, and a host's provider is kept.
+
 ### `cad-client`: application-facing CLI
 
 `cad-client` owns the executable experience:
@@ -47,7 +73,10 @@ while errors, logs, prompts, status, and progress use stderr.
 `cad-cli update` and the background release notice talk to GitHub, which is
 not the CAD platform, so they do not belong in `cad-api`. All of it lives in
 `crates/cad-client/src/exec/update/`, the only place `cad-client` uses
-`reqwest` directly:
+`reqwest` directly. It calls `cad_api::tls::install_crypto_provider()` before
+building its client, which `main` has already done in the binary but its unit
+tests need, and archive digests use `aws_lc_rs::digest`, the crypto library
+already linked for TLS:
 
 ```text
 crates/cad-client/src/exec/update/

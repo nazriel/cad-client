@@ -31,6 +31,11 @@ mise run dist         # release archive for the host in dist/
 mise run docs:cli     # regenerate docs/cli after changing a command
 ```
 
+Building also needs a C compiler: `aws-lc-sys` compiles AWS-LC, the TLS
+crypto library, from source. CMake, NASM and libclang are not needed; Linux
+musl targets need `musl-gcc` (`musl-tools`), and Windows on ARM64 needs
+`clang-cl` from LLVM.
+
 CI runs lint and the tests on Linux, macOS and Windows for every pull request,
 and builds the release archives. Pushing a tag `v<version>` that matches the
 workspace version publishes a GitHub release with archives for Linux (musl),
@@ -132,6 +137,18 @@ combine several — `1500ms`, `90s`, `1m30s`, `30m` — a bare number is rejecte
 rather than guessed at. The budget does not apply to document transfers, which
 may run as long as they keep making progress. Plain HTTP is rejected unless the
 server is a loopback host and `--allow-insecure-http` is passed.
+
+HTTPS uses rustls with the aws-lc-rs crypto provider and offers the hybrid
+post-quantum key exchange `X25519MLKEM768` first, falling back to X25519 or
+the NIST curves for servers without it. Certificates are checked against
+Mozilla's root store built into the binary (`webpki-roots`), not the operating
+system's store. `cad-cli update` downloads use the same settings.
+
+An application embedding `cad-api` needs no setup: the SDK installs aws-lc-rs
+as rustls' process-wide provider when it builds a client, unless the
+application installed a provider first. In that case the application's choice
+stands, and its connections, the SDK's included, get post-quantum key
+exchange only if that provider offers it.
 
 ## Commands
 
