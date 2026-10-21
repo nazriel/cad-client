@@ -19,6 +19,7 @@ use crate::config::{AppConfig, Environment, ProcessEnvironment};
 use crate::error::CliError;
 use crate::exec::update::notice::{self, BackgroundCheck};
 use crate::support::credentials::CredentialStore;
+use crate::support::profiles::ProfileStore;
 use crate::support::terminal::{ProcessTerminal, StatusKind, Terminal};
 
 /// Parses the supplied process arguments and executes the application.
@@ -58,7 +59,8 @@ where
     .flatten();
 
     let store = CredentialStore::from_environment(&environment);
-    let code = match execute(cli, &matches, &environment, &store, &terminal).await {
+    let profiles = ProfileStore::from_environment(&environment);
+    let code = match execute(cli, &matches, &environment, &store, &profiles, &terminal).await {
         Ok(status) => ExitCode::from(status),
         Err(error) => {
             let _ = terminal.status(StatusKind::Error, &error.to_string());
@@ -80,6 +82,7 @@ async fn execute(
     matches: &ArgMatches,
     environment: &impl Environment,
     store: &CredentialStore,
+    profiles: &ProfileStore,
     terminal: &dyn Terminal,
 ) -> Result<u8, CliError> {
     let output = cli.global.output;
@@ -103,9 +106,9 @@ async fn execute(
             }
             return Ok(report.exit_status);
         }
-        Invocation::Auth(group) => {
+        Invocation::Use(group) => {
             let report = group
-                .run(&command_context, &cli.global, environment, store)
+                .run(&command_context, &cli.global, environment, store, profiles)
                 .await?;
             terminal.write_output(&report.value, output)?;
             for (kind, message) in &report.messages {
@@ -116,7 +119,7 @@ async fn execute(
         Invocation::Online(online) => online,
     };
 
-    let config = AppConfig::resolve(&cli.global, environment, store)?;
+    let config = AppConfig::resolve(&cli.global, environment, store, &profiles.load()?)?;
     // Local preconditions are checked before the identity request so a typo
     // in a path does not cost a network round-trip to fail on.
     check_local_inputs(matches)?;

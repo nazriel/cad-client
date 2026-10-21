@@ -1,7 +1,7 @@
 //! The credentials file: `<config dir>/cad-cli/credentials.json`.
 //!
 //! ```json
-//! {"version":1,"credentials":{"https://app.carbonaltdelete.eu":{"kind":"apiKey", …}}}
+//! {"version":1,"credentials":{"production":{"kind":"apiKey", …}}}
 //! ```
 //!
 //! On Unix the directory is created 0700 and the file is written 0600, by
@@ -26,7 +26,7 @@ use crate::support::private_dir::create_private_dir;
 const VERSION: u32 = 1;
 
 /// The file's content. Entries stay raw JSON, so an entry of a kind this
-/// version does not know survives a rewrite for another origin.
+/// version does not know survives a rewrite for another profile.
 #[derive(Debug, Serialize, Deserialize)]
 struct Document {
     version: u32,
@@ -133,32 +133,32 @@ impl FileBackend {
 }
 
 impl Backend for FileBackend {
-    fn get(&self, origin: &str) -> Result<Option<SecretString>, StoreError> {
+    fn get(&self, profile: &str) -> Result<Option<SecretString>, StoreError> {
         let Some(document) = self.read()? else {
             return Ok(None);
         };
         Ok(document
             .credentials
-            .get(origin)
+            .get(profile)
             .map(|entry| SecretString::from(entry.to_string())))
     }
 
-    fn set(&self, origin: &str, value: &SecretString) -> Result<(), StoreError> {
+    fn set(&self, profile: &str, value: &SecretString) -> Result<(), StoreError> {
         let entry: Value = serde_json::from_str(value.expose_secret())
             .map_err(|error| CliError::Io(error.into()))?;
         let mut document = self.read()?.unwrap_or_else(|| Document {
             version: VERSION,
             credentials: BTreeMap::new(),
         });
-        document.credentials.insert(origin.to_owned(), entry);
+        document.credentials.insert(profile.to_owned(), entry);
         Ok(self.write(&document)?)
     }
 
-    fn remove(&self, origin: &str) -> Result<bool, StoreError> {
+    fn remove(&self, profile: &str) -> Result<bool, StoreError> {
         let Some(mut document) = self.read()? else {
             return Ok(false);
         };
-        if document.credentials.remove(origin).is_none() {
+        if document.credentials.remove(profile).is_none() {
             return Ok(false);
         }
         if document.credentials.is_empty() {

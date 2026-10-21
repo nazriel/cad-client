@@ -26,18 +26,18 @@ impl MemoryBackend {
         }
     }
 
-    pub(crate) fn put(&self, origin: &str, text: &str) {
+    pub(crate) fn put(&self, profile: &str, text: &str) {
         self.entries
             .lock()
             .expect("entries lock")
-            .insert(origin.to_owned(), text.to_owned());
+            .insert(profile.to_owned(), text.to_owned());
     }
 
-    pub(crate) fn text(&self, origin: &str) -> Option<String> {
+    pub(crate) fn text(&self, profile: &str) -> Option<String> {
         self.entries
             .lock()
             .expect("entries lock")
-            .get(origin)
+            .get(profile)
             .cloned()
     }
 
@@ -49,40 +49,40 @@ impl MemoryBackend {
 }
 
 impl Backend for MemoryBackend {
-    fn get(&self, origin: &str) -> Result<Option<SecretString>, StoreError> {
+    fn get(&self, profile: &str) -> Result<Option<SecretString>, StoreError> {
         self.check()?;
-        Ok(self.text(origin).map(SecretString::from))
+        Ok(self.text(profile).map(SecretString::from))
     }
 
-    fn set(&self, origin: &str, value: &SecretString) -> Result<(), StoreError> {
+    fn set(&self, profile: &str, value: &SecretString) -> Result<(), StoreError> {
         self.check()?;
-        self.put(origin, value.expose_secret());
+        self.put(profile, value.expose_secret());
         Ok(())
     }
 
-    fn remove(&self, origin: &str) -> Result<bool, StoreError> {
+    fn remove(&self, profile: &str) -> Result<bool, StoreError> {
         self.check()?;
         Ok(self
             .entries
             .lock()
             .expect("entries lock")
-            .remove(origin)
+            .remove(profile)
             .is_some())
     }
 }
 
 /// Lets a test keep a handle on the keyring it hands to the store.
 impl Backend for std::sync::Arc<MemoryBackend> {
-    fn get(&self, origin: &str) -> Result<Option<SecretString>, StoreError> {
-        (**self).get(origin)
+    fn get(&self, profile: &str) -> Result<Option<SecretString>, StoreError> {
+        (**self).get(profile)
     }
 
-    fn set(&self, origin: &str, value: &SecretString) -> Result<(), StoreError> {
-        (**self).set(origin, value)
+    fn set(&self, profile: &str, value: &SecretString) -> Result<(), StoreError> {
+        (**self).set(profile, value)
     }
 
-    fn remove(&self, origin: &str) -> Result<bool, StoreError> {
-        (**self).remove(origin)
+    fn remove(&self, profile: &str) -> Result<bool, StoreError> {
+        (**self).remove(profile)
     }
 }
 

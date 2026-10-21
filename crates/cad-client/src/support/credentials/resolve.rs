@@ -2,56 +2,25 @@
 //!
 //! 1. If `CAD_API_KEY` or `CAD_API_SECRET` is set, the environment decides
 //!    alone, and a missing half is an error.
-//! 2. Otherwise the keyring entry for the server's origin. A keyring that
-//!    cannot answer is not fatal: the lookup goes on and remembers why.
-//! 3. Then the credentials file's entry for the origin.
+//! 2. Otherwise the stored login of the profile in use: the keyring entry
+//!    first. A keyring that cannot answer is not fatal: the lookup goes on and
+//!    remembers why.
+//! 3. Then the credentials file's entry for the profile.
 //! 4. Otherwise there are none, and the error says how to get some.
-
-use std::fmt::Write as _;
-use std::path::Path;
+//!
+//! A stored login goes only to the origin it was created for. An entry made
+//! for another origin than the one selected is never used, whatever the
+//! profile's name says.
 
 use cad_api::ApiKeyV2Credentials;
-use chrono::{DateTime, Utc};
 use secrecy::SecretString;
-use serde::Serialize;
+use std::fmt::Write as _;
 use uuid::Uuid;
 
-use super::{CredentialStore, Location, StoredCredential};
+use super::{CredentialStore, StoredCredential};
 use crate::config::Environment;
 use crate::error::CliError;
-
-/// Where the credentials in use came from.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Source {
-    Environment,
-    Stored(Location),
-}
-
-/// [`Source`] without the file's path.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum SourceKind {
-    Environment,
-    Keyring,
-    File,
-}
-
-impl Source {
-    pub(crate) const fn kind(&self) -> SourceKind {
-        match self {
-            Self::Environment => SourceKind::Environment,
-            Self::Stored(Location::Keyring) => SourceKind::Keyring,
-            Self::Stored(Location::File(_)) => SourceKind::File,
-        }
-    }
-
-    pub(crate) fn path(&self) -> Option<&Path> {
-        match self {
-            Self::Environment => None,
-            Self::Stored(location) => location.path(),
-        }
-    }
-}
+use crate::support::profiles::ProfileName;
 
 /// The credentials a command will use, found once.
 ///
@@ -62,21 +31,11 @@ impl Source {
 pub(crate) struct Resolved {
     key_id: Uuid,
     secret: Option<SecretString>,
-    source: Source,
-    stored_at: Option<DateTime<Utc>>,
 }
 
 impl Resolved {
     pub(crate) const fn key_id(&self) -> Uuid {
         self.key_id
-    }
-
-    pub(crate) const fn source(&self) -> &Source {
-        &self.source
-    }
-
-    pub(crate) const fn stored_at(&self) -> Option<DateTime<Utc>> {
-        self.stored_at
     }
 
     /// The credentials to authenticate with.
@@ -92,35 +51,48 @@ impl Resolved {
     }
 }
 
-/// Finds the credentials for `origin`.
+/// Finds the credentials for `origin`, the server selected, on behalf of
+/// `profile`, the profile selected, if there is one.
 ///
 /// # Errors
 ///
 /// [`CliError::AuthConfig`] when there are none, when the environment holds
-/// only half of a login, or when the stored entry or file is unusable.
+/// only half of a login, when the stored entry or file is unusable, or when
+/// the stored entry was made for another origin.
 pub(crate) fn resolve(
     environment: &impl Environment,
     store: &CredentialStore,
+    profile: Option<&ProfileName>,
     origin: &str,
 ) -> Result<Resolved, CliError> {
     if environment.get("CAD_API_KEY").is_some() || environment.get("CAD_API_SECRET").is_some() {
         return from_environment(environment);
     }
-    let loaded = store.load(origin)?;
-    if let Some((credential, location)) = loaded.credential {
-        let stored_at = credential.stored_at();
+    let Some(profile) = profile else {
+        return Err(CliError::auth_config(format!(
+            "no credentials for {origin}; set CAD_API_KEY and CAD_API_SECRET, or create a \
+             profile with `cad-cli use profile <name> --url {origin}`"
+        )));
+    };
+    let loaded = store.load(profile)?;
+    if let Some((credential, _)) = loaded.credential {
+        if credential.origin() != origin {
+            return Err(CliError::auth_config(format!(
+                "the login stored for profile {profile} is for {}, not {origin}; log in again \
+                 with `cad-cli use profile {profile} --login`",
+                credential.origin()
+            )));
+        }
         let key_id = credential.key_id();
         let StoredCredential::ApiKey { secret, .. } = credential;
         return Ok(Resolved {
             key_id,
             secret: Some(secret),
-            source: Source::Stored(location),
-            stored_at: Some(stored_at),
         });
     }
     let mut message = format!(
-        "no credentials for {origin}; run `cad-cli auth login` or set CAD_API_KEY and \
-         CAD_API_SECRET"
+        "profile {profile} has no login; run `cad-cli use profile {profile} --login`, or set \
+         CAD_API_KEY and CAD_API_SECRET"
     );
     if let Some(reason) = loaded.keyring_failure {
         let _ = write!(message, " (the system keyring could not be read: {reason})");
@@ -138,10 +110,5 @@ fn from_environment(environment: &impl Environment) -> Result<Resolved, CliError
         .get("CAD_API_SECRET")
         .filter(|secret| !secret.is_empty())
         .map(SecretString::from);
-    Ok(Resolved {
-        key_id,
-        secret,
-        source: Source::Environment,
-        stored_at: None,
-    })
+    Ok(Resolved { key_id, secret })
 }

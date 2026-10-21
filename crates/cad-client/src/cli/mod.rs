@@ -13,15 +13,19 @@ use std::io::IsTerminal;
 
 use clap::{Command, CommandFactory, Parser};
 
-pub use args::{EnvironmentName, GlobalArgs, OutputFormat};
+pub use args::{GlobalArgs, OutputFormat};
 
 use help::{Example, Variable};
 
 const ENVIRONMENT: &[Variable] = &[
     Variable::new(
+        "CAD_PROFILE",
+        "Profile to use instead of the active one. --profile has precedence over it",
+    ),
+    Variable::new(
         "CAD_API_KEY",
         "Machine API key ID (a UUID). When it or CAD_API_SECRET is set, the environment alone \
-         decides which key commands use; otherwise they use the login `cad-cli auth login` stored",
+         decides which key commands use; otherwise they use the login of the profile",
     ),
     Variable::new(
         "CAD_API_SECRET",
@@ -29,11 +33,8 @@ const ENVIRONMENT: &[Variable] = &[
     ),
     Variable::new(
         "CAD_SERVER_URL",
-        "Exact application origin. Overrides --environment and CAD_ENV, but not --server-url",
-    ),
-    Variable::new(
-        "CAD_ENV",
-        "Origin preset when no origin is given: production (prod) or staging (stage)",
+        "Exact application origin, instead of the profile's. --server-url has precedence over \
+         it. A stored login is used only with the profile whose server this is",
     ),
     Variable::new(
         "CAD_COMPANY_ID",
@@ -41,8 +42,8 @@ const ENVIRONMENT: &[Variable] = &[
     ),
     Variable::new(
         "CAD_CLI_KEYRING",
-        "Set to 0 (or false, no, off) to never use the system keyring: `cad-cli auth login` then \
-         keeps the key in the credentials file only. For machines without a keyring",
+        "Set to 0 (or false, no, off) to never use the system keyring: logins are then kept in \
+         the credentials file only. For machines without a keyring",
     ),
     Variable::new(
         "CAD_CLI_COMPLETE_OFFLINE",
@@ -63,8 +64,12 @@ const ENVIRONMENT: &[Variable] = &[
 
 const EXAMPLES: &[Example] = &[
     Example::new(
-        "cad-cli --environment staging context show",
-        "Check which API key and company the CLI acts as",
+        "cad-cli use",
+        "List the profiles and show which one commands use",
+    ),
+    Example::new(
+        "cad-cli --profile staging context show",
+        "Check which API key and company the CLI acts as, on another profile",
     ),
     Example::new(
         "cad-cli company list --output json",
@@ -302,17 +307,36 @@ mod tests {
     }
 
     #[test]
-    fn environment_flag_accepts_the_same_aliases_as_cad_env() {
-        for (value, expected) in [
-            ("production", super::EnvironmentName::Production),
-            ("prod", super::EnvironmentName::Production),
-            ("staging", super::EnvironmentName::Staging),
-            ("stage", super::EnvironmentName::Staging),
+    fn profile_names_are_checked_by_the_parser() {
+        for name in [
+            "production",
+            "dev",
+            "a",
+            "my_profile-2",
+            "0abc",
+            &"a".repeat(32),
         ] {
-            let cli = Cli::try_parse_from(["cad-cli", "--environment", value, "company", "list"])
-                .expect("known environment name");
-            assert_eq!(cli.global.environment, Some(expected));
+            let cli = Cli::try_parse_from(["cad-cli", "--profile", name, "company", "list"])
+                .unwrap_or_else(|error| panic!("{name} must parse: {error}"));
+            assert_eq!(cli.global.profile.unwrap().as_str(), name);
         }
+        for name in ["", "Prod", "-a", "_a", "a b", "a.b", "é", &"a".repeat(33)] {
+            let error =
+                Cli::try_parse_from(["cad-cli", &format!("--profile={name}"), "company", "list"])
+                    .expect_err("an invalid name must not parse");
+            assert_eq!(
+                error.kind(),
+                clap::error::ErrorKind::ValueValidation,
+                "{name:?}"
+            );
+            assert!(error.to_string().contains("1 to 32 characters"), "{name:?}");
+        }
+    }
+
+    #[test]
+    fn the_environment_flag_is_gone() {
+        Cli::try_parse_from(["cad-cli", "--environment", "staging", "company", "list"])
+            .expect_err("--environment was removed in favour of profiles");
     }
 
     #[test]

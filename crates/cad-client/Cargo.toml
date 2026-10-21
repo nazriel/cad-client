@@ -57,7 +57,7 @@ tar.workspace = true
 [target.'cfg(windows)'.dependencies]
 zip.workspace = true
 
-# The system keyring behind `auth login`: one store per platform.
+# The system keyring behind `use profile`: one store per platform.
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-native-keyring-store.workspace = true
 

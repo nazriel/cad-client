@@ -153,7 +153,7 @@ mod tests {
     #[test]
     fn sections_render_with_styles_and_parse_back_from_plain_text() {
         let help = super::environment_and_examples(
-            &[Variable::new("CAD_ENV", "Select a preset")],
+            &[Variable::new("CAD_PROFILE", "Select a profile")],
             &[
                 Example::new("cad-cli company list", "List companies"),
                 Example::new("cad-cli context show", "Show the session"),
@@ -169,7 +169,7 @@ mod tests {
             [
                 Section {
                     heading: "Environment".to_owned(),
-                    entries: vec![("CAD_ENV".to_owned(), "Select a preset".to_owned())],
+                    entries: vec![("CAD_PROFILE".to_owned(), "Select a profile".to_owned())],
                 },
                 Section {
                     heading: "Examples".to_owned(),

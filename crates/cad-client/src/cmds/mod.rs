@@ -2,7 +2,6 @@
 
 pub mod activity_category;
 pub mod activity_group;
-pub mod auth;
 pub mod benchmark;
 pub mod company;
 pub mod company_template;
@@ -17,6 +16,7 @@ pub mod report;
 pub mod reporting_period;
 pub mod schema;
 pub mod update;
+pub mod r#use;
 
 use std::time::Duration;
 
@@ -57,8 +57,17 @@ const MAN_EXAMPLES: &[Example] = &[Example::new(
 /// Top-level `cad-cli` command.
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Log in to a server with an API key, check the login and log out.
-    Auth(auth::Group),
+    /// Show and switch the active profile, and log in.
+    ///
+    /// Without a subcommand it lists the profiles, sorted by name, with the
+    /// server and the login of each. `active` marks the profile `use profile`
+    /// last switched to; `selected` marks the one a command run now would use,
+    /// which differs when `--profile`, `CAD_PROFILE` or a server given with
+    /// `--server-url` or `CAD_SERVER_URL` picks another. It makes no request.
+    ///
+    /// `use profile <name>` creates, switches to, logs in to and forgets a
+    /// profile.
+    Use(r#use::Group),
     /// Manage the company's activity categories.
     ActivityCategory(activity_category::Group),
     /// Manage the company's activity groups.
@@ -127,7 +136,6 @@ impl Command {
                 Invocation::Online(OnlineCommand::ActivityCategory(group))
             }
             Self::ActivityGroup(group) => Invocation::Online(OnlineCommand::ActivityGroup(group)),
-            Self::Auth(group) => Invocation::Auth(group),
             Self::Benchmark(group) => Invocation::Online(OnlineCommand::Benchmark(group)),
             Self::Context(group) => Invocation::Online(OnlineCommand::Context(group)),
             Self::Company(group) => Invocation::Online(OnlineCommand::Company(group)),
@@ -149,6 +157,7 @@ impl Command {
             Self::Completions(args) => Invocation::Offline(OfflineCommand::Completions(args)),
             Self::Man => Invocation::Offline(OfflineCommand::Man),
             Self::Update(args) => Invocation::Standalone(StandaloneCommand::Update(args)),
+            Self::Use(group) => Invocation::Use(group),
         }
     }
 }
@@ -164,9 +173,9 @@ pub(crate) enum Invocation {
     /// Needs neither the platform nor its configuration, but returns data in
     /// the selected output format like an online command.
     Standalone(StandaloneCommand),
-    /// Manages the stored credentials of one server: it needs that server
-    /// but must not resolve credentials the way an online command does.
-    Auth(auth::Group),
+    /// Manages the profiles and their stored logins: it must not resolve
+    /// credentials the way an online command does.
+    Use(r#use::Group),
     Online(OnlineCommand),
 }
 

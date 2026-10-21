@@ -1,13 +1,9 @@
 use std::{fmt, time::Duration};
 
 use reqwest::redirect::Policy;
-use strum::{EnumString, IntoStaticStr};
 use url::{Host, Url};
 
 use crate::{Error, Result};
-
-const PRODUCTION_URL: &str = "https://app.carbonaltdelete.eu";
-const STAGING_URL: &str = "https://staging.carbonaltdelete.eu";
 
 /// Total time allowed for one platform API call, including its response body.
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_mins(1);
@@ -41,33 +37,6 @@ pub(crate) fn storage_redirect_policy() -> Policy {
     })
 }
 
-/// A built-in Carbon+Alt+Delete deployment.
-///
-/// The canonical name and its short alias are declared once and drive both
-/// parsing and rendering. The parse error stays [`Error::Configuration`] rather
-/// than `strum`'s own type, so the SDK's error contract is unchanged.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, EnumString, IntoStaticStr)]
-#[strum(parse_err_ty = Error, parse_err_fn = unknown_environment)]
-#[non_exhaustive]
-pub enum Environment {
-    #[strum(serialize = "production", serialize = "prod")]
-    Production,
-    #[strum(serialize = "staging", serialize = "stage")]
-    Staging,
-}
-
-fn unknown_environment(value: &str) -> Error {
-    Error::configuration(format!(
-        "unknown environment `{value}`; expected `production` or `staging`"
-    ))
-}
-
-impl fmt::Display for Environment {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str((*self).into())
-    }
-}
-
 /// A validated same-origin base URL and the timeout policy for API requests.
 #[derive(Clone, Eq, PartialEq)]
 pub struct ServerConfig {
@@ -96,32 +65,6 @@ impl ServerConfig {
     /// ambient credentials/query state, or does not resolve to a loopback host.
     pub fn insecure_loopback(value: impl AsRef<str>) -> Result<Self> {
         Self::parse(value.as_ref(), true)
-    }
-
-    #[must_use]
-    /// Returns the configuration for a built-in deployment.
-    ///
-    /// # Panics
-    ///
-    /// Panics only if a compile-time built-in URL is changed to an invalid URL.
-    pub fn for_environment(environment: Environment) -> Self {
-        let value = match environment {
-            Environment::Production => PRODUCTION_URL,
-            Environment::Staging => STAGING_URL,
-        };
-
-        // Built-in constants are covered by unit tests and cannot be influenced by callers.
-        Self::new(value).expect("built-in server URL must remain valid")
-    }
-
-    #[must_use]
-    pub fn production() -> Self {
-        Self::for_environment(Environment::Production)
-    }
-
-    #[must_use]
-    pub fn staging() -> Self {
-        Self::for_environment(Environment::Staging)
     }
 
     #[must_use]
@@ -241,30 +184,6 @@ fn is_loopback(url: &Url) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn environment_names_accept_their_short_aliases_and_render_canonically() {
-        for (value, expected) in [
-            ("production", Environment::Production),
-            ("prod", Environment::Production),
-            ("staging", Environment::Staging),
-            ("stage", Environment::Staging),
-        ] {
-            assert_eq!(
-                value.parse::<Environment>().expect("known environment"),
-                expected
-            );
-        }
-
-        assert_eq!(Environment::Production.to_string(), "production");
-        assert_eq!(Environment::Staging.to_string(), "staging");
-        assert!(
-            "qa".parse::<Environment>()
-                .expect_err("unknown environment")
-                .to_string()
-                .contains("unknown environment `qa`")
-        );
-    }
 
     #[test]
     fn accepts_https_and_normalizes_trailing_slash() {

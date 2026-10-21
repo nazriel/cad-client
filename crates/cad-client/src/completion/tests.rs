@@ -17,6 +17,7 @@ use super::{Resource, candidates, lookup, offline, preceding_words};
 use crate::cli::Cli;
 use crate::config::Environment;
 use crate::support::credentials::memory::empty_store;
+use crate::support::profiles::{Profile, ProfileName, ProfileSet, ProfileStore};
 
 const API_KEY: Uuid = Uuid::from_u128(0x1234_5678_9abc_4def_8123_4567_89ab_cdef);
 const SECRET: &str = "s3cr3t-never-on-disk";
@@ -49,6 +50,11 @@ impl Environment for FakeEnvironment {
     fn get(&self, key: &str) -> Option<String> {
         self.0.get(key).cloned()
     }
+}
+
+/// No profile: nothing in the profiles file.
+fn no_profiles() -> ProfileStore {
+    ProfileStore::new(None)
 }
 
 fn words(words: &[&str]) -> Vec<OsString> {
@@ -393,7 +399,11 @@ fn without_credentials_nothing_is_completed_and_nothing_is_cached() {
     let dir = tempfile::tempdir().unwrap();
     let environment =
         FakeEnvironment::default().with("XDG_CACHE_HOME", dir.path().to_string_lossy());
-    let line = words(&["cad-cli", "--environment", "staging"]);
+    let line = words(&[
+        "cad-cli",
+        "--server-url",
+        "https://staging.carbonaltdelete.eu",
+    ]);
 
     for resource in [Resource::Companies, Resource::ReportingPeriods] {
         assert_eq!(
@@ -402,6 +412,7 @@ fn without_credentials_nothing_is_completed_and_nothing_is_cached() {
                 &line,
                 &environment,
                 &empty_store(),
+                &no_profiles(),
                 SystemTime::now()
             ),
             NO_CANDIDATES
@@ -420,6 +431,7 @@ fn without_a_server_nothing_is_completed() {
             &words(&["cad-cli"]),
             &environment,
             &empty_store(),
+            &no_profiles(),
             SystemTime::now()
         ),
         NO_CANDIDATES
@@ -435,13 +447,14 @@ fn an_invalid_company_variable_completes_no_reporting_periods() {
             Resource::ReportingPeriods,
             &words(&[
                 "cad-cli",
-                "--environment",
-                "staging",
+                "--server-url",
+                "https://staging.carbonaltdelete.eu",
                 "reporting-period",
                 "get"
             ]),
             &environment,
             &empty_store(),
+            &no_profiles(),
             SystemTime::now()
         ),
         NO_CANDIDATES
@@ -514,6 +527,7 @@ async fn complete(
             &line,
             &environment,
             &empty_store(),
+            &no_profiles(),
             SystemTime::now(),
         )
     })
@@ -722,7 +736,7 @@ struct CountingKeyring {
 impl crate::support::credentials::Backend for CountingKeyring {
     fn get(
         &self,
-        _origin: &str,
+        _profile: &str,
     ) -> Result<Option<secrecy::SecretString>, crate::support::credentials::StoreError> {
         self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(None)
@@ -730,26 +744,28 @@ impl crate::support::credentials::Backend for CountingKeyring {
 
     fn set(
         &self,
-        _origin: &str,
+        _profile: &str,
         _value: &secrecy::SecretString,
     ) -> Result<(), crate::support::credentials::StoreError> {
         unreachable!("completion never writes credentials")
     }
 
-    fn remove(&self, _origin: &str) -> Result<bool, crate::support::credentials::StoreError> {
+    fn remove(&self, _profile: &str) -> Result<bool, crate::support::credentials::StoreError> {
         // Only the test's own set-up removes entries (a file write clears the
         // keyring's); completion never does.
         Ok(false)
     }
 }
 
-/// A store whose credentials file holds a login for `server`, and whose
-/// keyring is read through a counter.
+/// A store whose credentials file holds the login of the profile `work`, whose
+/// server is `server` and which is the active profile, and whose keyring is
+/// read through a counter.
 fn store_with_login(
     server: &MockServer,
     dir: &Path,
 ) -> (
     crate::support::credentials::CredentialStore,
+    ProfileStore,
     std::sync::Arc<std::sync::atomic::AtomicUsize>,
 ) {
     use crate::support::credentials::{CredentialStore, FileBackend, StoredCredential};
@@ -766,8 +782,9 @@ fn store_with_login(
     let origin = server.uri();
     store
         .save_in_file(
-            &origin,
+            &profile_name("work"),
             &StoredCredential::api_key(
+                origin.clone(),
                 API_KEY,
                 secrecy::SecretString::from("cad_aks_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_AbCde"),
                 Uuid::nil().into(),
@@ -776,7 +793,23 @@ fn store_with_login(
         )
         .unwrap();
     reads.store(0, std::sync::atomic::Ordering::SeqCst);
-    (store, reads)
+    let profiles = ProfileStore::new(Some(dir.join("config").join("profiles.json")));
+    let mut set = ProfileSet::default();
+    set.insert(
+        profile_name("work"),
+        Profile {
+            url: origin,
+            allow_insecure_http: true,
+            login: None,
+        },
+    );
+    set.activate(profile_name("work"));
+    profiles.save(&set).unwrap();
+    (store, profiles, reads)
+}
+
+fn profile_name(name: &str) -> ProfileName {
+    name.parse().unwrap()
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -805,11 +838,12 @@ async fn a_stored_login_keys_the_cache_and_authenticates_the_live_lookup() {
         .mount(&server)
         .await;
     let dir = tempfile::tempdir().unwrap();
-    let (store, reads) = store_with_login(&server, dir.path());
-    // No CAD_API_KEY or CAD_API_SECRET: the login is the only source.
+    let (store, profiles, reads) = store_with_login(&server, dir.path());
+    // No CAD_API_KEY or CAD_API_SECRET: the login is the only source. And no
+    // server on the command line: the active profile's is the one.
     let environment = FakeEnvironment::default()
         .with("XDG_CACHE_HOME", dir.path().join("cache").to_string_lossy());
-    let line = server_words(&server, &[]);
+    let line = words(&["cad-cli"]);
 
     let run = || {
         candidates(
@@ -817,6 +851,7 @@ async fn a_stored_login_keys_the_cache_and_authenticates_the_live_lookup() {
             &line,
             &environment,
             &store,
+            &profiles,
             SystemTime::now(),
         )
     };
@@ -856,7 +891,21 @@ fn without_a_stored_login_nothing_is_completed_and_the_keyring_is_read_once() {
     );
     let environment =
         FakeEnvironment::default().with("XDG_CACHE_HOME", dir.path().to_string_lossy());
-    let line = words(&["cad-cli", "--environment", "staging"]);
+    // The active profile is `staging`, and it has no login anywhere.
+    let config = tempfile::tempdir().unwrap();
+    let profiles = ProfileStore::new(Some(config.path().join("profiles.json")));
+    let mut set = ProfileSet::default();
+    set.insert(
+        profile_name("staging"),
+        Profile {
+            url: "https://staging.carbonaltdelete.eu".to_owned(),
+            allow_insecure_http: false,
+            login: None,
+        },
+    );
+    set.activate(profile_name("staging"));
+    profiles.save(&set).unwrap();
+    let line = words(&["cad-cli"]);
 
     assert_eq!(
         candidates(
@@ -864,6 +913,7 @@ fn without_a_stored_login_nothing_is_completed_and_the_keyring_is_read_once() {
             &line,
             &environment,
             &store,
+            &profiles,
             SystemTime::now()
         ),
         NO_CANDIDATES
@@ -895,11 +945,123 @@ fn the_environment_is_not_overridden_by_a_stored_login_in_completion() {
 
     let values = candidates(
         Resource::Companies,
-        &words(&["cad-cli", "--environment", "staging"]),
+        &words(&[
+            "cad-cli",
+            "--server-url",
+            "https://staging.carbonaltdelete.eu",
+        ]),
         &environment,
         &store,
+        &no_profiles(),
         SystemTime::now(),
     );
     assert_eq!(values, [candidate("from-cache")]);
     assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_profile_flag_and_the_server_it_picks_complete_with_that_profiles_login() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(IDENTITY_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(identity(COMPANY_ID)))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(COMPANIES_PATH))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!([company(
+                COMPANY_ID,
+                "Acme GmbH",
+                "ACTIVE"
+            )])),
+        )
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let (store, profiles, _) = store_with_login(&server, dir.path());
+    let environment = FakeEnvironment::default()
+        .with("XDG_CACHE_HOME", dir.path().join("cache").to_string_lossy());
+    let expected = [Candidate::new(
+        COMPANY_ID.to_string(),
+        Some("Acme GmbH".to_owned()),
+    )];
+
+    // Another profile is active, so only the flag (or the server) reaches `work`.
+    let mut set = profiles.load().unwrap();
+    set.insert(
+        profile_name("other"),
+        Profile {
+            url: "https://other.example.test".to_owned(),
+            allow_insecure_http: false,
+            login: None,
+        },
+    );
+    set.activate(profile_name("other"));
+    profiles.save(&set).unwrap();
+
+    for line in [
+        words(&["cad-cli", "--profile", "work"]),
+        server_words(&server, &[]),
+    ] {
+        let values = tokio::task::block_in_place(|| {
+            candidates(
+                Resource::Companies,
+                &line,
+                &environment,
+                &store,
+                &profiles,
+                SystemTime::now(),
+            )
+        });
+        assert_eq!(values, expected, "{line:?}");
+    }
+    // The active profile has no login, and the answer says nothing.
+    assert_eq!(
+        tokio::task::block_in_place(|| candidates(
+            Resource::Companies,
+            &words(&["cad-cli"]),
+            &environment,
+            &store,
+            &profiles,
+            SystemTime::now(),
+        )),
+        NO_CANDIDATES
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_server_that_is_not_a_profiles_never_borrows_the_active_profiles_login() {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (store, profiles, reads) = store_with_login(&server, dir.path());
+    let environment = FakeEnvironment::default()
+        .with("XDG_CACHE_HOME", dir.path().join("cache").to_string_lossy());
+
+    for line in [
+        words(&["cad-cli", "--server-url", "https://elsewhere.example.test"]),
+        words(&[
+            "cad-cli",
+            "--profile",
+            "work",
+            "--server-url",
+            "https://elsewhere.example.test",
+        ]),
+    ] {
+        let values = tokio::task::block_in_place(|| {
+            candidates(
+                Resource::Companies,
+                &line,
+                &environment,
+                &store,
+                &profiles,
+                SystemTime::now(),
+            )
+        });
+        assert_eq!(values, NO_CANDIDATES, "{line:?}");
+    }
+    // Nothing was sent anywhere, and the store was not even read.
+    assert!(server.received_requests().await.unwrap().is_empty());
+    assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert!(!dir.path().join("cache").exists());
 }

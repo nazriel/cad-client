@@ -76,7 +76,7 @@ pub(crate) struct KeyringBackend;
 
 impl KeyringBackend {
     fn on_own_thread<T: Send>(
-        origin: &str,
+        profile: &str,
         operation: impl FnOnce(&Entry) -> keyring_core::Result<T> + Send,
     ) -> Result<T, Failure> {
         std::thread::scope(|scope| {
@@ -85,7 +85,7 @@ impl KeyringBackend {
                     if let Err(reason) = &*STORE {
                         return Err(Failure::Unavailable(reason.clone()));
                     }
-                    let entry = Entry::new(SERVICE, origin)
+                    let entry = Entry::new(SERVICE, profile)
                         .map_err(|error| Failure::Unavailable(error.to_string()))?;
                     operation(&entry).map_err(|error| match error {
                         keyring_core::Error::NoEntry => Failure::NoEntry,
@@ -103,22 +103,22 @@ impl KeyringBackend {
 }
 
 impl Backend for KeyringBackend {
-    fn get(&self, origin: &str) -> Result<Option<SecretString>, StoreError> {
-        match Self::on_own_thread(origin, Entry::get_password) {
+    fn get(&self, profile: &str) -> Result<Option<SecretString>, StoreError> {
+        match Self::on_own_thread(profile, Entry::get_password) {
             Ok(text) => Ok(Some(SecretString::from(text))),
             Err(Failure::NoEntry) => Ok(None),
             Err(failure) => Err(failure.into()),
         }
     }
 
-    fn set(&self, origin: &str, value: &SecretString) -> Result<(), StoreError> {
-        Ok(Self::on_own_thread(origin, |entry| {
+    fn set(&self, profile: &str, value: &SecretString) -> Result<(), StoreError> {
+        Ok(Self::on_own_thread(profile, |entry| {
             entry.set_password(value.expose_secret())
         })?)
     }
 
-    fn remove(&self, origin: &str) -> Result<bool, StoreError> {
-        match Self::on_own_thread(origin, Entry::delete_credential) {
+    fn remove(&self, profile: &str) -> Result<bool, StoreError> {
+        match Self::on_own_thread(profile, Entry::delete_credential) {
             Ok(()) => Ok(true),
             Err(Failure::NoEntry) => Ok(false),
             Err(failure) => Err(failure.into()),

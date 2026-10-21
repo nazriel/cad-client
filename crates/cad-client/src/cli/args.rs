@@ -6,6 +6,8 @@ use std::time::Duration;
 use cad_api::ids::CompanyId;
 use clap::{Args, ValueEnum, ValueHint};
 
+use crate::support::profiles::ProfileName;
+
 /// Options that apply to every command.
 ///
 /// They get a heading of their own so that a subcommand's `--help` keeps its
@@ -13,13 +15,14 @@ use clap::{Args, ValueEnum, ValueHint};
 #[derive(Debug, Args)]
 #[command(next_help_heading = "Global options")]
 pub struct GlobalArgs {
-    /// Exact application origin. Has precedence over every preset.
+    /// Use this profile instead of the active one (see `cad-cli use`).
+    #[arg(long, global = true, value_name = "NAME", add = crate::completion::profile_names())]
+    pub profile: Option<ProfileName>,
+
+    /// Exact application origin, instead of the profile's. A stored login is
+    /// used only with the profile whose server this is.
     #[arg(long, global = true, value_hint = ValueHint::Url)]
     pub server_url: Option<String>,
-
-    /// Select the production or staging application origin.
-    #[arg(long, value_enum, global = true)]
-    pub environment: Option<EnvironmentName>,
 
     /// Use another accessible company instead of the company from the API-key token.
     #[arg(long, global = true, add = crate::completion::company_ids())]
@@ -40,18 +43,6 @@ pub struct GlobalArgs {
     /// Skip confirmation prompts for consequential operations.
     #[arg(long, global = true)]
     pub yes: bool,
-}
-
-/// Deployment preset selectable with `--environment`.
-///
-/// The aliases mirror the ones [`cad_api::Environment`] accepts for `CAD_ENV`,
-/// so the flag and the variable never disagree about what `prod` means.
-#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
-pub enum EnvironmentName {
-    #[value(alias = "prod")]
-    Production,
-    #[value(alias = "stage")]
-    Staging,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]

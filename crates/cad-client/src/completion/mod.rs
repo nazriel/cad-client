@@ -7,6 +7,7 @@
 //! with candidates on stdout before any configuration is resolved.
 //!
 //! Commands, flags and enum values are completed from the command definition.
+//! Profile names are completed from the profiles file, without any request.
 //! A few identifiers are completed from the platform: `--company-id` and the
 //! positional reporting-period IDs. Those lookups follow strict rules, because
 //! anything a completer prints ends up in the user's prompt:
@@ -38,9 +39,10 @@ use clap_complete::{CompleteEnv, Shell};
 use self::cache::{Cache, CacheKey, Candidate, Network};
 use crate::cli::{Cli, GlobalArgs};
 use crate::config::{
-    AppConfig, Environment, ProcessEnvironment, resolve_company_id, resolve_server,
+    AppConfig, Environment, ProcessEnvironment, resolve_company_id, resolve_credentials, select,
 };
-use crate::support::credentials::{self, CredentialStore};
+use crate::support::credentials::CredentialStore;
+use crate::support::profiles::ProfileStore;
 use crate::support::switch::is_off_word;
 
 /// Name the shell completes, and the program its registration calls back.
@@ -157,6 +159,26 @@ pub(crate) fn company_ids() -> ArgValueCompleter {
     ArgValueCompleter::new(|current: &OsStr| complete(Resource::Companies, current))
 }
 
+/// Completes a profile name with the profiles in the profiles file. It makes
+/// no request and reads no credentials.
+pub(crate) fn profile_names() -> ArgValueCompleter {
+    ArgValueCompleter::new(|current: &OsStr| {
+        let Some(current) = current.to_str() else {
+            return Vec::new();
+        };
+        let profiles = ProfileStore::from_environment(&ProcessEnvironment)
+            .load()
+            .unwrap_or_default();
+        profiles
+            .iter()
+            .filter(|(name, _)| name.as_str().starts_with(current))
+            .map(|(name, profile)| {
+                CompletionCandidate::new(name.as_str()).help(Some(profile.url.clone().into()))
+            })
+            .collect()
+    })
+}
+
 /// Completes a reporting-period ID with the periods of the selected company.
 pub(crate) fn reporting_period_ids() -> ArgValueCompleter {
     ArgValueCompleter::new(|current: &OsStr| complete(Resource::ReportingPeriods, current))
@@ -186,11 +208,13 @@ fn complete(resource: Resource, current: &OsStr) -> Vec<CompletionCandidate> {
     };
     let words = WORDS.with_borrow(Clone::clone);
     let store = CredentialStore::from_environment(&ProcessEnvironment);
+    let profiles = ProfileStore::from_environment(&ProcessEnvironment);
     candidates(
         resource,
         &words,
         &ProcessEnvironment,
         &store,
+        &profiles,
         SystemTime::now(),
     )
     .into_iter()
@@ -200,12 +224,16 @@ fn complete(resource: Resource, current: &OsStr) -> Vec<CompletionCandidate> {
 }
 
 /// Every candidate for `resource` in the context the preceding `words`,
-/// `environment` and credential `store` describe, unfiltered.
+/// `environment`, credential `store` and `profiles` describe, unfiltered.
+///
+/// The server and the login are those the command being completed would use,
+/// profile and active profile included.
 pub(crate) fn candidates(
     resource: Resource,
     words: &[OsString],
     environment: &impl Environment,
     store: &CredentialStore,
+    profiles: &ProfileStore,
     now: SystemTime,
 ) -> Vec<Candidate> {
     let Some(mut global) = global_args(words) else {
@@ -215,15 +243,20 @@ pub(crate) fn candidates(
     // there is nothing to answer from; the secret is only needed to go live.
     // The credentials are found once, here, and reused by the live lookup, so
     // the store is read at most once per request.
-    let Ok(server) = resolve_server(&global, environment) else {
+    global.request_timeout = lookup::LIVE_TIMEOUT;
+    let Ok(profiles) = profiles.load() else {
         return Vec::new();
     };
-    let Ok(resolved) = credentials::resolve(environment, store, &credentials::origin_of(&server))
-    else {
+    let Ok(selection) = select(&global, environment, &profiles) else {
+        return Vec::new();
+    };
+    let Ok(resolved) = resolve_credentials(environment, store, &selection) else {
         return Vec::new();
     };
     let api_key_id = resolved.key_id();
-    let origin = server.base_url().as_str();
+    let server = selection.server;
+    let origin = server.base_url().as_str().to_owned();
+    let origin = origin.as_str();
     let key = match resource {
         Resource::Companies => CacheKey::session(resource.name(), origin, api_key_id),
         Resource::ReportingPeriods => match resolve_company_id(&global, environment) {
@@ -238,8 +271,7 @@ pub(crate) fn candidates(
     };
     let cache = Cache::from_environment(environment);
     cache::lookup(cache.as_ref(), &key, network, now, || {
-        global.request_timeout = lookup::LIVE_TIMEOUT;
-        let config = AppConfig::resolve_with(&global, environment, resolved).ok()?;
+        let config = AppConfig::resolve_with(&global, environment, server, resolved).ok()?;
         lookup::fetch(resource, config)
     })
 }

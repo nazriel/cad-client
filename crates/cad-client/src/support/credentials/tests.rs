@@ -14,14 +14,17 @@ use uuid::Uuid;
 
 use super::memory::MemoryBackend;
 use super::{
-    CredentialStore, FileBackend, Location, Source, SourceKind, StoreError, StoredCredential,
-    keyring_enabled, origin_of, resolve,
+    CredentialStore, FileBackend, Location, StoreError, StoredCredential, keyring_enabled,
+    origin_of, resolve,
 };
 use crate::config::Environment;
 use crate::error::CliError;
+use crate::support::profiles::ProfileName;
 
 const ORIGIN: &str = "https://staging.carbonaltdelete.eu";
 const OTHER_ORIGIN: &str = "https://app.carbonaltdelete.eu";
+const PROFILE: &str = "staging";
+const OTHER_PROFILE: &str = "production";
 const KEY_ID: Uuid = Uuid::from_u128(0xaa);
 const OTHER_KEY_ID: Uuid = Uuid::from_u128(0xab);
 const USER_ID: UserId = UserId::from_uuid(Uuid::from_u128(0xbb));
@@ -49,7 +52,21 @@ fn stored_at() -> DateTime<Utc> {
 }
 
 fn credential(key_id: Uuid, secret: &str) -> StoredCredential {
-    StoredCredential::api_key(key_id, SecretString::from(secret), USER_ID, stored_at())
+    StoredCredential::api_key(
+        ORIGIN.to_owned(),
+        key_id,
+        SecretString::from(secret),
+        USER_ID,
+        stored_at(),
+    )
+}
+
+fn profile() -> ProfileName {
+    PROFILE.parse().unwrap()
+}
+
+fn other_profile() -> ProfileName {
+    OTHER_PROFILE.parse().unwrap()
 }
 
 /// A keyring double, the file in `dir`, and a store made of both.
@@ -94,28 +111,30 @@ fn an_entry_is_stored_as_tagged_json_and_read_back() {
         value,
         json!({
             "kind": "apiKey",
+            "origin": ORIGIN,
             "keyId": KEY_ID,
             "secret": SECRET,
             "userId": USER_ID,
             "storedAt": "2026-10-21T12:00:00Z",
         })
     );
-    let read = StoredCredential::from_value(ORIGIN, value).unwrap();
+    let read = StoredCredential::from_value(&profile(), value).unwrap();
     assert_eq!(key_of(&read), KEY_ID);
+    assert_eq!(read.origin(), ORIGIN);
     assert_eq!(read.stored_at(), stored_at());
 }
 
 #[test]
 fn an_entry_of_an_unknown_kind_names_the_kind_and_the_origin() {
     let error = StoredCredential::from_value(
-        ORIGIN,
+        &profile(),
         json!({"kind": "oauth", "accessToken": "never-shown", "refreshToken": "never-shown"}),
     )
     .unwrap_err();
     assert!(matches!(error, CliError::AuthConfig(_)));
     let message = error.to_string();
     assert!(message.contains("oauth"), "{message}");
-    assert!(message.contains(ORIGIN), "{message}");
+    assert!(message.contains(PROFILE), "{message}");
     assert!(!message.contains("never-shown"), "{message}");
 }
 
@@ -124,13 +143,17 @@ fn an_entry_without_a_kind_or_with_missing_fields_is_an_error_not_a_skip() {
     for value in [
         json!({"keyId": KEY_ID}),
         json!({"kind": "apiKey", "keyId": KEY_ID}),
-        json!({"kind": "apiKey", "keyId": "nope", "secret": SECRET, "userId": USER_ID,
+        // No origin: an entry that cannot say which server it is for is not used.
+        json!({"kind": "apiKey", "keyId": KEY_ID, "secret": SECRET, "userId": USER_ID,
+               "storedAt": "2026-10-21T12:00:00Z"}),
+        json!({"kind": "apiKey", "origin": ORIGIN, "keyId": "nope", "secret": SECRET,
+               "userId": USER_ID,
                "storedAt": "2026-10-21T12:00:00Z"}),
         json!("a string"),
     ] {
-        let error = StoredCredential::from_value(ORIGIN, value.clone()).unwrap_err();
+        let error = StoredCredential::from_value(&profile(), value.clone()).unwrap_err();
         assert!(matches!(error, CliError::AuthConfig(_)), "{value}");
-        assert!(error.to_string().contains(ORIGIN), "{value}");
+        assert!(error.to_string().contains(PROFILE), "{value}");
     }
 }
 
@@ -141,7 +164,13 @@ fn no_debug_output_shows_the_secret() {
     let environment = Env::default()
         .with("CAD_API_KEY", &KEY_ID.to_string())
         .with("CAD_API_SECRET", SECRET);
-    let resolved = resolve(&environment, &super::memory::empty_store(), ORIGIN).unwrap();
+    let resolved = resolve(
+        &environment,
+        &super::memory::empty_store(),
+        Some(&profile()),
+        ORIGIN,
+    )
+    .unwrap();
     assert!(!format!("{resolved:?}").contains(SECRET));
 }
 
@@ -210,21 +239,21 @@ fn a_keyring_entry_wins_over_a_file_entry_and_each_origin_has_its_own() {
     let fixture = fixture(dir.path());
     fixture
         .store
-        .save_in_file(ORIGIN, &credential(OTHER_KEY_ID, OTHER_SECRET))
+        .save_in_file(&profile(), &credential(OTHER_KEY_ID, OTHER_SECRET))
         .unwrap();
     // `save_in_keyring` would remove the file entry, so plant the keyring's.
     fixture
         .keyring
-        .put(ORIGIN, &credential(KEY_ID, SECRET).to_value().to_string());
+        .put(PROFILE, &credential(KEY_ID, SECRET).to_value().to_string());
 
-    let (entry, location) = found(fixture.store.load(ORIGIN).unwrap());
+    let (entry, location) = found(fixture.store.load(&profile()).unwrap());
     assert_eq!(key_of(&entry), KEY_ID);
     assert_eq!(location, Location::Keyring);
 
     assert!(
         fixture
             .store
-            .load(OTHER_ORIGIN)
+            .load(&other_profile())
             .unwrap()
             .credential
             .is_none()
@@ -232,7 +261,7 @@ fn a_keyring_entry_wins_over_a_file_entry_and_each_origin_has_its_own() {
     assert!(
         fixture
             .store
-            .load("https://staging.carbonaltdelete.eu:8443")
+            .load(&"staging-8443".parse().unwrap())
             .unwrap()
             .credential
             .is_none()
@@ -245,16 +274,16 @@ fn an_unavailable_keyring_falls_through_to_the_file_and_says_why() {
     let fixture = with_keyring(dir.path(), MemoryBackend::unavailable("no secret service"));
     fixture
         .store
-        .save_in_file(ORIGIN, &credential(KEY_ID, SECRET))
+        .save_in_file(&profile(), &credential(KEY_ID, SECRET))
         .unwrap();
 
-    let loaded = fixture.store.load(ORIGIN).unwrap();
+    let loaded = fixture.store.load(&profile()).unwrap();
     assert_eq!(loaded.keyring_failure.as_deref(), Some("no secret service"));
     let (entry, location) = found(loaded);
     assert_eq!(key_of(&entry), KEY_ID);
     assert_eq!(location, Location::File(fixture.path.clone()));
 
-    let loaded = fixture.store.load(OTHER_ORIGIN).unwrap();
+    let loaded = fixture.store.load(&other_profile()).unwrap();
     assert!(loaded.credential.is_none());
     assert_eq!(loaded.keyring_failure.as_deref(), Some("no secret service"));
 }
@@ -266,21 +295,21 @@ fn one_origin_has_one_stored_entry() {
 
     fixture
         .store
-        .save_in_file(ORIGIN, &credential(KEY_ID, SECRET))
+        .save_in_file(&profile(), &credential(KEY_ID, SECRET))
         .unwrap();
     fixture
         .store
-        .save_in_keyring(ORIGIN, &credential(OTHER_KEY_ID, OTHER_SECRET))
+        .save_in_keyring(&profile(), &credential(OTHER_KEY_ID, OTHER_SECRET))
         .unwrap();
     // The file held nothing else, so it is gone with its only entry.
     assert!(!fixture.path.exists());
-    assert!(fixture.keyring.text(ORIGIN).is_some());
+    assert!(fixture.keyring.text(PROFILE).is_some());
 
     fixture
         .store
-        .save_in_file(ORIGIN, &credential(KEY_ID, SECRET))
+        .save_in_file(&profile(), &credential(KEY_ID, SECRET))
         .unwrap();
-    assert!(fixture.keyring.text(ORIGIN).is_none());
+    assert!(fixture.keyring.text(PROFILE).is_none());
     assert!(fixture.path.exists());
 }
 
@@ -290,7 +319,7 @@ fn an_unreachable_keyring_does_not_fail_a_file_write() {
     let fixture = with_keyring(dir.path(), MemoryBackend::unavailable("locked"));
     fixture
         .store
-        .save_in_file(ORIGIN, &credential(KEY_ID, SECRET))
+        .save_in_file(&profile(), &credential(KEY_ID, SECRET))
         .expect("an unreachable keyring does not fail the file write");
 }
 
@@ -300,13 +329,13 @@ fn an_unusable_keyring_stores_and_removes_nothing() {
     let fixture = with_keyring(dir.path(), MemoryBackend::unavailable("locked"));
     fixture
         .store
-        .save_in_file(OTHER_ORIGIN, &credential(KEY_ID, SECRET))
+        .save_in_file(&other_profile(), &credential(KEY_ID, SECRET))
         .unwrap();
     let before = std::fs::read_to_string(&fixture.path).unwrap();
 
     let error = fixture
         .store
-        .save_in_keyring(ORIGIN, &credential(KEY_ID, SECRET))
+        .save_in_keyring(&profile(), &credential(KEY_ID, SECRET))
         .unwrap_err();
     assert!(matches!(&error, StoreError::Unavailable(reason) if reason == "locked"));
     assert_eq!(std::fs::read_to_string(&fixture.path).unwrap(), before);
@@ -314,23 +343,23 @@ fn an_unusable_keyring_stores_and_removes_nothing() {
     // A keyring turned off by CAD_CLI_KEYRING is unavailable the same way.
     let store = CredentialStore::new(None, Some(FileBackend::new(fixture.path.clone())));
     let error = store
-        .save_in_keyring(ORIGIN, &credential(KEY_ID, SECRET))
+        .save_in_keyring(&profile(), &credential(KEY_ID, SECRET))
         .unwrap_err();
     assert!(
         matches!(&error, StoreError::Unavailable(reason) if reason.contains("CAD_CLI_KEYRING"))
     );
-    assert!(store.load(ORIGIN).unwrap().keyring_failure.is_none());
+    assert!(store.load(&profile()).unwrap().keyring_failure.is_none());
 }
 
 #[test]
 fn without_a_configuration_directory_the_file_cannot_be_written() {
     let store = CredentialStore::new(None, None);
     let error = store
-        .save_in_file(ORIGIN, &credential(KEY_ID, SECRET))
+        .save_in_file(&profile(), &credential(KEY_ID, SECRET))
         .unwrap_err();
     assert!(matches!(error, CliError::AuthConfig(_)));
     assert!(store.file_path().is_none());
-    assert!(store.load(ORIGIN).unwrap().credential.is_none());
+    assert!(store.load(&profile()).unwrap().credential.is_none());
 }
 
 #[test]
@@ -339,19 +368,19 @@ fn removing_reports_where_an_entry_was_and_keeps_other_origins() {
     let fixture = fixture(dir.path());
     fixture
         .store
-        .save_in_file(ORIGIN, &credential(KEY_ID, SECRET))
+        .save_in_file(&profile(), &credential(KEY_ID, SECRET))
         .unwrap();
     fixture
         .store
-        .save_in_file(OTHER_ORIGIN, &credential(OTHER_KEY_ID, OTHER_SECRET))
+        .save_in_file(&other_profile(), &credential(OTHER_KEY_ID, OTHER_SECRET))
         .unwrap();
     fixture
         .keyring
-        .put(ORIGIN, &credential(KEY_ID, SECRET).to_value().to_string());
+        .put(PROFILE, &credential(KEY_ID, SECRET).to_value().to_string());
 
-    let removed = fixture.store.remove(ORIGIN).unwrap();
+    let removed = fixture.store.remove(&profile()).unwrap();
     assert!(removed.keyring && removed.file);
-    assert!(fixture.keyring.text(ORIGIN).is_none());
+    assert!(fixture.keyring.text(PROFILE).is_none());
     assert!(
         fixture.path.exists(),
         "another origin's entry keeps the file"
@@ -359,16 +388,16 @@ fn removing_reports_where_an_entry_was_and_keeps_other_origins() {
     assert!(
         fixture
             .store
-            .load(OTHER_ORIGIN)
+            .load(&other_profile())
             .unwrap()
             .credential
             .is_some()
     );
 
-    let removed = fixture.store.remove(ORIGIN).unwrap();
+    let removed = fixture.store.remove(&profile()).unwrap();
     assert!(!removed.keyring && !removed.file);
 
-    let removed = fixture.store.remove(OTHER_ORIGIN).unwrap();
+    let removed = fixture.store.remove(&other_profile()).unwrap();
     assert!(removed.file);
     assert!(!fixture.path.exists(), "the file goes with its last entry");
 }
@@ -377,7 +406,7 @@ fn removing_reports_where_an_entry_was_and_keeps_other_origins() {
 fn removing_reports_a_keyring_that_cannot_be_reached() {
     let dir = tempfile::tempdir().unwrap();
     let fixture = with_keyring(dir.path(), MemoryBackend::unavailable("locked"));
-    let removed = fixture.store.remove(ORIGIN).unwrap();
+    let removed = fixture.store.remove(&profile()).unwrap();
     assert!(!removed.keyring && !removed.file);
     assert_eq!(removed.keyring_failure.as_deref(), Some("locked"));
 }
@@ -390,7 +419,7 @@ fn the_file_has_the_documented_shape() {
     let fixture = fixture(dir.path());
     let written = fixture
         .store
-        .save_in_file(ORIGIN, &credential(KEY_ID, SECRET))
+        .save_in_file(&profile(), &credential(KEY_ID, SECRET))
         .unwrap();
     assert_eq!(written, fixture.path);
 
@@ -400,7 +429,7 @@ fn the_file_has_the_documented_shape() {
         document,
         json!({
             "version": 1,
-            "credentials": {ORIGIN: credential(KEY_ID, SECRET).to_value()},
+            "credentials": {PROFILE: credential(KEY_ID, SECRET).to_value()},
         })
     );
     // Nothing else is left beside it: the temporary file was renamed away.
@@ -420,7 +449,7 @@ fn the_file_is_written_0600_in_a_0700_directory() {
     let fixture = fixture(dir.path());
     fixture
         .store
-        .save_in_file(ORIGIN, &credential(KEY_ID, SECRET))
+        .save_in_file(&profile(), &credential(KEY_ID, SECRET))
         .unwrap();
     let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode(&fixture.path), 0o600);
@@ -429,7 +458,7 @@ fn the_file_is_written_0600_in_a_0700_directory() {
     // A second write replaces the file and keeps both modes.
     fixture
         .store
-        .save_in_file(OTHER_ORIGIN, &credential(OTHER_KEY_ID, OTHER_SECRET))
+        .save_in_file(&other_profile(), &credential(OTHER_KEY_ID, OTHER_SECRET))
         .unwrap();
     assert_eq!(mode(&fixture.path), 0o600);
 }
@@ -443,14 +472,14 @@ fn a_file_with_any_group_or_other_bit_is_refused_with_the_fix() {
     let fixture = fixture(dir.path());
     fixture
         .store
-        .save_in_file(ORIGIN, &credential(KEY_ID, SECRET))
+        .save_in_file(&profile(), &credential(KEY_ID, SECRET))
         .unwrap();
 
     for mode in [0o644, 0o640, 0o604, 0o660, 0o666, 0o601] {
         std::fs::set_permissions(&fixture.path, std::fs::Permissions::from_mode(mode)).unwrap();
         let path = fixture.path.display().to_string();
         let expected = format!("{mode:03o}");
-        let loaded = fixture.store.load(ORIGIN).unwrap_err();
+        let loaded = fixture.store.load(&profile()).unwrap_err();
         assert!(matches!(loaded, CliError::AuthConfig(_)), "{mode:o}");
         let message = loaded.to_string();
         assert!(message.contains(&path), "{message}");
@@ -462,14 +491,14 @@ fn a_file_with_any_group_or_other_bit_is_refused_with_the_fix() {
         assert!(
             fixture
                 .store
-                .save_in_file(OTHER_ORIGIN, &credential(KEY_ID, SECRET))
+                .save_in_file(&other_profile(), &credential(KEY_ID, SECRET))
                 .is_err()
         );
-        assert!(fixture.store.remove(ORIGIN).is_err());
+        assert!(fixture.store.remove(&profile()).is_err());
     }
 
     std::fs::set_permissions(&fixture.path, std::fs::Permissions::from_mode(0o400)).unwrap();
-    assert!(fixture.store.load(ORIGIN).unwrap().credential.is_some());
+    assert!(fixture.store.load(&profile()).unwrap().credential.is_some());
 }
 
 #[test]
@@ -478,12 +507,12 @@ fn a_file_that_is_not_ours_or_is_newer_is_an_error_not_overwritten() {
     let fixture = fixture(dir.path());
     fixture
         .store
-        .save_in_file(ORIGIN, &credential(KEY_ID, SECRET))
+        .save_in_file(&profile(), &credential(KEY_ID, SECRET))
         .unwrap();
 
     for content in ["not json", "[]", r#"{"version":2,"credentials":{}}"#] {
         std::fs::write(&fixture.path, content).unwrap();
-        let error = fixture.store.load(ORIGIN).unwrap_err();
+        let error = fixture.store.load(&profile()).unwrap_err();
         assert!(matches!(error, CliError::AuthConfig(_)), "{content}");
         assert!(
             error
@@ -493,7 +522,7 @@ fn a_file_that_is_not_ours_or_is_newer_is_an_error_not_overwritten() {
         assert!(
             fixture
                 .store
-                .save_in_file(ORIGIN, &credential(KEY_ID, SECRET))
+                .save_in_file(&profile(), &credential(KEY_ID, SECRET))
                 .is_err()
         );
         assert_eq!(std::fs::read_to_string(&fixture.path).unwrap(), content);
@@ -506,7 +535,7 @@ fn an_entry_of_an_unknown_kind_is_an_error_and_survives_other_writes() {
     let fixture = fixture(dir.path());
     std::fs::create_dir_all(fixture.path.parent().unwrap()).unwrap();
     let newer = json!({"kind": "oauth", "accessToken": "never-shown"});
-    let document = json!({"version": 1, "credentials": {ORIGIN: newer}});
+    let document = json!({"version": 1, "credentials": {PROFILE: newer}});
     std::fs::write(&fixture.path, document.to_string()).unwrap();
     #[cfg(unix)]
     {
@@ -514,10 +543,10 @@ fn an_entry_of_an_unknown_kind_is_an_error_and_survives_other_writes() {
         std::fs::set_permissions(&fixture.path, std::fs::Permissions::from_mode(0o600)).unwrap();
     }
 
-    let error = fixture.store.load(ORIGIN).unwrap_err();
+    let error = fixture.store.load(&profile()).unwrap_err();
     let message = error.to_string();
     assert!(
-        message.contains("oauth") && message.contains(ORIGIN),
+        message.contains("oauth") && message.contains(PROFILE),
         "{message}"
     );
     assert!(!message.contains("never-shown"));
@@ -525,15 +554,15 @@ fn an_entry_of_an_unknown_kind_is_an_error_and_survives_other_writes() {
     // Another origin can still be logged in, and the entry we cannot read stays.
     fixture
         .store
-        .save_in_file(OTHER_ORIGIN, &credential(KEY_ID, SECRET))
+        .save_in_file(&other_profile(), &credential(KEY_ID, SECRET))
         .unwrap();
     let after: Value =
         serde_json::from_str(&std::fs::read_to_string(&fixture.path).unwrap()).unwrap();
-    assert_eq!(after["credentials"][ORIGIN], newer);
+    assert_eq!(after["credentials"][PROFILE], newer);
     assert!(
         fixture
             .store
-            .load(OTHER_ORIGIN)
+            .load(&other_profile())
             .unwrap()
             .credential
             .is_some()
@@ -542,9 +571,8 @@ fn an_entry_of_an_unknown_kind_is_an_error_and_survives_other_writes() {
 
 // --- resolution --------------------------------------------------------------
 
-fn resolved_key(environment: &Env, store: &CredentialStore) -> Result<(Uuid, Source), CliError> {
-    resolve(environment, store, ORIGIN)
-        .map(|resolved| (resolved.key_id(), resolved.source().clone()))
+fn resolved_key(environment: &Env, store: &CredentialStore) -> Result<Uuid, CliError> {
+    resolve(environment, store, Some(&profile()), ORIGIN).map(|resolved| resolved.key_id())
 }
 
 #[test]
@@ -554,29 +582,35 @@ fn the_environment_beats_the_keyring_which_beats_the_file() {
     let environment = Env::default();
     fixture
         .store
-        .save_in_file(ORIGIN, &credential(Uuid::from_u128(1), SECRET))
+        .save_in_file(&profile(), &credential(Uuid::from_u128(1), SECRET))
         .unwrap();
 
-    let (key, source) = resolved_key(&environment, &fixture.store).unwrap();
-    assert_eq!(key, Uuid::from_u128(1));
-    assert_eq!(source, Source::Stored(Location::File(fixture.path.clone())));
+    assert_eq!(
+        resolved_key(&environment, &fixture.store).unwrap(),
+        Uuid::from_u128(1),
+        "the file"
+    );
 
     fixture.keyring.put(
-        ORIGIN,
+        PROFILE,
         &credential(Uuid::from_u128(2), SECRET)
             .to_value()
             .to_string(),
     );
-    let (key, source) = resolved_key(&environment, &fixture.store).unwrap();
-    assert_eq!(key, Uuid::from_u128(2));
-    assert_eq!(source, Source::Stored(Location::Keyring));
+    assert_eq!(
+        resolved_key(&environment, &fixture.store).unwrap(),
+        Uuid::from_u128(2),
+        "the keyring"
+    );
 
     let environment = Env::default()
         .with("CAD_API_KEY", &Uuid::from_u128(3).to_string())
         .with("CAD_API_SECRET", "from-the-environment");
-    let (key, source) = resolved_key(&environment, &fixture.store).unwrap();
-    assert_eq!(key, Uuid::from_u128(3));
-    assert_eq!(source, Source::Environment);
+    assert_eq!(
+        resolved_key(&environment, &fixture.store).unwrap(),
+        Uuid::from_u128(3),
+        "the environment"
+    );
 }
 
 #[test]
@@ -585,18 +619,18 @@ fn half_an_environment_login_decides_alone_and_is_an_error() {
     let fixture = fixture(dir.path());
     fixture
         .store
-        .save_in_file(ORIGIN, &credential(KEY_ID, SECRET))
+        .save_in_file(&profile(), &credential(KEY_ID, SECRET))
         .unwrap();
     fixture
         .keyring
-        .put(ORIGIN, &credential(KEY_ID, SECRET).to_value().to_string());
+        .put(PROFILE, &credential(KEY_ID, SECRET).to_value().to_string());
 
     let only_secret = Env::default().with("CAD_API_SECRET", "s");
-    let error = resolve(&only_secret, &fixture.store, ORIGIN).unwrap_err();
+    let error = resolve(&only_secret, &fixture.store, Some(&profile()), ORIGIN).unwrap_err();
     assert!(matches!(&error, CliError::AuthConfig(m) if m == "CAD_API_KEY is not set"));
 
     let not_a_uuid = Env::default().with("CAD_API_KEY", "nope");
-    let error = resolve(&not_a_uuid, &fixture.store, ORIGIN).unwrap_err();
+    let error = resolve(&not_a_uuid, &fixture.store, Some(&profile()), ORIGIN).unwrap_err();
     assert!(error.to_string().contains("CAD_API_KEY is not a UUID"));
 
     // The Key ID alone is known (completion keys its cache on it); the secret
@@ -607,9 +641,8 @@ fn half_an_environment_login_decides_alone_and_is_an_error() {
             .with("CAD_API_KEY", &KEY_ID.to_string())
             .with("CAD_API_SECRET", ""),
     ] {
-        let resolved = resolve(&environment, &fixture.store, ORIGIN).unwrap();
+        let resolved = resolve(&environment, &fixture.store, Some(&profile()), ORIGIN).unwrap();
         assert_eq!(resolved.key_id(), KEY_ID);
-        assert_eq!(*resolved.source(), Source::Environment);
         let error = resolved.into_credentials().unwrap_err();
         assert!(
             matches!(&error, CliError::AuthConfig(m) if m == "CAD_API_SECRET is not set or empty")
@@ -618,58 +651,138 @@ fn half_an_environment_login_decides_alone_and_is_an_error() {
 }
 
 #[test]
-fn a_stored_login_resolves_to_credentials_with_its_metadata() {
+fn a_stored_login_resolves_to_credentials() {
     let dir = tempfile::tempdir().unwrap();
     let fixture = fixture(dir.path());
     fixture
         .store
-        .save_in_file(ORIGIN, &credential(KEY_ID, SECRET))
+        .save_in_file(&profile(), &credential(KEY_ID, SECRET))
         .unwrap();
-    let resolved = resolve(&Env::default(), &fixture.store, ORIGIN).unwrap();
+    let resolved = resolve(&Env::default(), &fixture.store, Some(&profile()), ORIGIN).unwrap();
     assert_eq!(resolved.key_id(), KEY_ID);
-    assert_eq!(resolved.stored_at(), Some(stored_at()));
-    assert_eq!(resolved.source().kind(), SourceKind::File);
-    assert_eq!(resolved.source().path(), Some(fixture.path.as_path()));
     assert!(resolved.into_credentials().is_ok());
 }
 
 #[test]
-fn another_origin_has_no_credentials_and_the_error_says_how_to_get_some() {
+fn another_profile_has_no_login_and_the_error_says_how_to_get_one() {
     let dir = tempfile::tempdir().unwrap();
     let fixture = fixture(dir.path());
     fixture
         .store
-        .save_in_file(ORIGIN, &credential(KEY_ID, SECRET))
+        .save_in_file(&profile(), &credential(KEY_ID, SECRET))
         .unwrap();
 
-    let error = resolve(&Env::default(), &fixture.store, OTHER_ORIGIN).unwrap_err();
+    let error = resolve(
+        &Env::default(),
+        &fixture.store,
+        Some(&other_profile()),
+        OTHER_ORIGIN,
+    )
+    .unwrap_err();
     assert!(matches!(error, CliError::AuthConfig(_)));
-    let message = error.to_string();
-    assert!(message.contains(OTHER_ORIGIN), "{message}");
-    assert!(message.contains("cad-cli auth login"), "{message}");
-    assert!(
-        message.contains("CAD_API_KEY and CAD_API_SECRET"),
-        "{message}"
+    assert_eq!(
+        error.to_string(),
+        "authentication configuration error: profile production has no login; run `cad-cli use \
+         profile production --login`, or set CAD_API_KEY and CAD_API_SECRET"
     );
-    assert!(!message.contains("keyring"), "{message}");
-    assert!(!message.contains(SECRET), "{message}");
+}
+
+#[test]
+fn without_a_profile_only_the_environment_can_supply_credentials() {
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = fixture(dir.path());
+    // A stored login exists, and is not even looked for.
+    fixture
+        .store
+        .save_in_file(&profile(), &credential(KEY_ID, SECRET))
+        .unwrap();
+    fixture
+        .keyring
+        .put(PROFILE, &credential(KEY_ID, SECRET).to_value().to_string());
+
+    let error = resolve(&Env::default(), &fixture.store, None, ORIGIN).unwrap_err();
+    assert!(matches!(error, CliError::AuthConfig(_)));
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "authentication configuration error: no credentials for {ORIGIN}; set CAD_API_KEY \
+             and CAD_API_SECRET, or create a profile with `cad-cli use profile <name> --url \
+             {ORIGIN}`"
+        )
+    );
+
+    let environment = Env::default()
+        .with("CAD_API_KEY", &Uuid::from_u128(3).to_string())
+        .with("CAD_API_SECRET", "from-the-environment");
+    assert_eq!(
+        resolve(&environment, &fixture.store, None, ORIGIN)
+            .unwrap()
+            .key_id(),
+        Uuid::from_u128(3)
+    );
+}
+
+#[test]
+fn an_entry_made_for_another_origin_is_never_used_whatever_its_profile_is_called() {
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = fixture(dir.path());
+    // Filed under `staging`, but created for the production server.
+    let foreign = StoredCredential::api_key(
+        OTHER_ORIGIN.to_owned(),
+        KEY_ID,
+        SecretString::from(SECRET),
+        USER_ID,
+        stored_at(),
+    );
+    fixture.store.save_in_file(&profile(), &foreign).unwrap();
+
+    for store_in_keyring in [false, true] {
+        if store_in_keyring {
+            fixture.store.save_in_keyring(&profile(), &foreign).unwrap();
+        }
+        let error = resolve(&Env::default(), &fixture.store, Some(&profile()), ORIGIN).unwrap_err();
+        assert!(matches!(error, CliError::AuthConfig(_)));
+        let message = error.to_string();
+        assert_eq!(
+            message,
+            format!(
+                "authentication configuration error: the login stored for profile staging is \
+                 for {OTHER_ORIGIN}, not {ORIGIN}; log in again with `cad-cli use profile \
+                 staging --login`"
+            )
+        );
+        assert!(!message.contains(SECRET));
+    }
+    // It is fine for the origin it was made for.
+    assert!(
+        resolve(
+            &Env::default(),
+            &fixture.store,
+            Some(&profile()),
+            OTHER_ORIGIN
+        )
+        .is_ok()
+    );
 }
 
 #[test]
 fn a_failed_keyring_is_named_in_the_missing_credentials_error() {
     let dir = tempfile::tempdir().unwrap();
     let fixture = with_keyring(dir.path(), MemoryBackend::unavailable("no secret service"));
-    let error = resolve(&Env::default(), &fixture.store, ORIGIN).unwrap_err();
+    let error = resolve(&Env::default(), &fixture.store, Some(&profile()), ORIGIN).unwrap_err();
     let message = error.to_string();
     assert!(message.contains("no secret service"), "{message}");
-    assert!(message.contains("cad-cli auth login"), "{message}");
+    assert!(
+        message.contains("cad-cli use profile staging --login"),
+        "{message}"
+    );
 
     // The file still answers when the keyring does not.
     fixture
         .store
-        .save_in_file(ORIGIN, &credential(KEY_ID, SECRET))
+        .save_in_file(&profile(), &credential(KEY_ID, SECRET))
         .unwrap();
-    assert!(resolve(&Env::default(), &fixture.store, ORIGIN).is_ok());
+    assert!(resolve(&Env::default(), &fixture.store, Some(&profile()), ORIGIN).is_ok());
 }
 
 #[test]
@@ -678,26 +791,26 @@ fn a_stored_entry_of_an_unknown_kind_stops_resolution() {
     let fixture = fixture(dir.path());
     fixture
         .keyring
-        .put(ORIGIN, r#"{"kind":"oauth","accessToken":"never-shown"}"#);
+        .put(PROFILE, r#"{"kind":"oauth","accessToken":"never-shown"}"#);
     // A readable file entry behind it is not used instead.
     fixture
         .store
-        .save_in_file(ORIGIN, &credential(KEY_ID, SECRET))
+        .save_in_file(&profile(), &credential(KEY_ID, SECRET))
         .unwrap();
     fixture
         .keyring
-        .put(ORIGIN, r#"{"kind":"oauth","accessToken":"never-shown"}"#);
+        .put(PROFILE, r#"{"kind":"oauth","accessToken":"never-shown"}"#);
 
-    let error = resolve(&Env::default(), &fixture.store, ORIGIN).unwrap_err();
+    let error = resolve(&Env::default(), &fixture.store, Some(&profile()), ORIGIN).unwrap_err();
     let message = error.to_string();
     assert!(
-        message.contains("oauth") && message.contains(ORIGIN),
+        message.contains("oauth") && message.contains(PROFILE),
         "{message}"
     );
     assert!(!message.contains("never-shown"));
 
-    fixture.keyring.put(ORIGIN, "{not json");
-    let error = resolve(&Env::default(), &fixture.store, ORIGIN).unwrap_err();
+    fixture.keyring.put(PROFILE, "{not json");
+    let error = resolve(&Env::default(), &fixture.store, Some(&profile()), ORIGIN).unwrap_err();
     assert!(matches!(error, CliError::AuthConfig(_)));
 }
 
@@ -707,9 +820,9 @@ fn the_secret_read_from_a_store_is_the_one_stored() {
     let fixture = fixture(dir.path());
     fixture
         .store
-        .save_in_file(ORIGIN, &credential(KEY_ID, SECRET))
+        .save_in_file(&profile(), &credential(KEY_ID, SECRET))
         .unwrap();
-    let (entry, _) = found(fixture.store.load(ORIGIN).unwrap());
+    let (entry, _) = found(fixture.store.load(&profile()).unwrap());
     let StoredCredential::ApiKey { secret, .. } = entry;
     assert_eq!(secret.expose_secret(), SECRET);
 }

@@ -20,7 +20,7 @@ fn cad_cli(program: &Path, server: &MockServer, cache: &Path) -> Command {
         "CAD_API_KEY",
         "CAD_API_SECRET",
         "CAD_SERVER_URL",
-        "CAD_ENV",
+        "CAD_PROFILE",
         "CAD_COMPANY_ID",
         "CAD_CLI_NO_UPDATE_CHECK",
         "CI",

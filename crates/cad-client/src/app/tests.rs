@@ -20,6 +20,7 @@ use crate::config::Environment;
 use crate::error::CliError;
 use crate::output::TableStyle;
 use crate::support::credentials::memory::empty_store;
+use crate::support::profiles::{Profile, ProfileName, ProfileSet, ProfileStore};
 use crate::support::terminal::{Progress, StatusKind, Terminal, Validator};
 
 const COMPANY_ID: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0042);
@@ -223,7 +224,15 @@ async fn run_cli_status(
         .try_get_matches_from(arguments)
         .expect("arguments parse");
     let cli = Cli::from_arg_matches(&matches).expect("arguments map to Cli");
-    execute(cli, &matches, environment, &empty_store(), terminal).await
+    execute(
+        cli,
+        &matches,
+        environment,
+        &empty_store(),
+        &ProfileStore::new(None),
+        terminal,
+    )
+    .await
 }
 
 #[test]
@@ -1265,7 +1274,13 @@ async fn a_company_the_platform_resolves_differently_fails_as_an_api_error() {
 async fn missing_credentials_fail_before_any_request() {
     let terminal = FakeTerminal::default();
     let error = run_cli(
-        &["cad-cli", "--environment", "staging", "company", "list"],
+        &[
+            "cad-cli",
+            "--server-url",
+            "https://staging.carbonaltdelete.eu",
+            "company",
+            "list",
+        ],
         &FakeEnvironment::default(),
         &terminal,
     )
@@ -1273,6 +1288,30 @@ async fn missing_credentials_fail_before_any_request() {
     .expect_err("missing credentials must fail");
 
     assert!(matches!(error, CliError::AuthConfig(_)));
+    assert!(
+        error
+            .to_string()
+            .contains("no credentials for https://staging.carbonaltdelete.eu"),
+        "{error}"
+    );
+    assert_eq!(terminal.stdout(), "");
+}
+
+#[tokio::test]
+async fn without_a_profile_or_a_server_a_command_says_how_to_choose_one() {
+    let terminal = FakeTerminal::default();
+    let error = run_cli(&["cad-cli", "company", "list"], &credentials(), &terminal)
+        .await
+        .expect_err("no profile and no server must fail");
+
+    assert!(matches!(error, CliError::Config { .. }), "{error:?}");
+    assert_eq!(error.exit_code(), std::process::ExitCode::from(2));
+    assert_eq!(
+        error.to_string(),
+        "configuration error: no profile is selected; run `cad-cli use profile <name>` \
+         (production, staging, dev, or a name of your own), pass --profile, or set \
+         CAD_SERVER_URL with CAD_API_KEY and CAD_API_SECRET"
+    );
     assert_eq!(terminal.stdout(), "");
 }
 
@@ -1312,8 +1351,8 @@ async fn unreadable_input_fails_before_the_identity_request() {
     let error = run_cli(
         &[
             "cad-cli",
-            "--environment",
-            "staging",
+            "--server-url",
+            "https://staging.carbonaltdelete.eu",
             "report",
             "create",
             "--input",
@@ -1371,11 +1410,12 @@ async fn update_check_needs_no_platform_configuration_and_renders_its_result() {
     assert!(statuses[0].1.starts_with("cad-cli 99.0.0 is available"));
 }
 
-/// A store whose credentials file holds a login for `origin`, in `dir`.
+/// A credentials file holding a login for the profile `work`, which is the
+/// active profile and whose server is `origin`, all in `dir`.
 fn store_with_login(
     origin: &str,
     dir: &std::path::Path,
-) -> crate::support::credentials::CredentialStore {
+) -> (crate::support::credentials::CredentialStore, ProfileStore) {
     use crate::support::credentials::{CredentialStore, FileBackend, StoredCredential};
 
     let store = CredentialStore::new(
@@ -1384,10 +1424,12 @@ fn store_with_login(
             dir.join("cad-cli").join("credentials.json"),
         )),
     );
+    let work: ProfileName = "work".parse().unwrap();
     store
         .save_in_file(
-            origin,
+            &work,
             &StoredCredential::api_key(
+                origin.to_owned(),
                 Uuid::from_u128(0xaa),
                 secrecy::SecretString::from("cad_aks_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_AbCde"),
                 Uuid::nil().into(),
@@ -1395,121 +1437,291 @@ fn store_with_login(
             ),
         )
         .unwrap();
-    store
+    let profiles = ProfileStore::new(Some(dir.join("cad-cli").join("profiles.json")));
+    let mut set = ProfileSet::default();
+    set.insert(
+        work.clone(),
+        Profile {
+            url: origin.to_owned(),
+            allow_insecure_http: true,
+            login: None,
+        },
+    );
+    set.activate(work);
+    profiles.save(&set).unwrap();
+    (store, profiles)
 }
 
 async fn run_with_store(
     arguments: &[&str],
+    environment: &FakeEnvironment,
     store: &crate::support::credentials::CredentialStore,
+    profiles: &ProfileStore,
     terminal: &FakeTerminal,
 ) -> Result<u8, CliError> {
     let matches = Cli::command()
         .try_get_matches_from(arguments)
         .expect("arguments parse");
     let cli = Cli::from_arg_matches(&matches).expect("arguments map to Cli");
-    execute(cli, &matches, &FakeEnvironment::default(), store, terminal).await
+    execute(cli, &matches, environment, store, profiles, terminal).await
+}
+
+fn bearer(request: &wiremock::Request) -> String {
+    request
+        .headers
+        .get("authorization")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned()
+}
+
+const STORED_BEARER: &str = "Bearer 00000000-0000-0000-0000-0000000000aa.cad_aks_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_AbCde";
+
+#[tokio::test]
+async fn a_command_runs_on_the_active_profiles_server_with_its_stored_login() {
+    let server = mock_server().await;
+    Mock::given(method("GET"))
+        .and(path(COMPANIES_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let (store, profiles) = store_with_login(&server.uri(), dir.path());
+    let terminal = FakeTerminal::default();
+
+    // No server, no profile and no credentials on the command line or in the
+    // environment: the active profile supplies all three.
+    let status = run_with_store(
+        &["cad-cli", "--output", "json", "company", "list"],
+        &FakeEnvironment::default(),
+        &store,
+        &profiles,
+        &terminal,
+    )
+    .await
+    .expect("the active profile is enough");
+
+    assert_eq!(status, 0);
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(
+        request_paths(&server).await,
+        [
+            format!("GET {IDENTITY_PATH}"),
+            format!("GET {COMPANIES_PATH}")
+        ]
+    );
+    assert!(
+        requests
+            .iter()
+            .all(|request| bearer(request) == STORED_BEARER)
+    );
 }
 
 #[tokio::test]
-async fn an_online_command_authenticates_with_the_stored_login() {
+async fn the_environment_beats_the_stored_login() {
     let server = mock_server().await;
     let dir = tempfile::tempdir().unwrap();
-    let store = store_with_login(&server.uri(), dir.path());
-    let terminal = FakeTerminal::default();
+    let (store, profiles) = store_with_login(&server.uri(), dir.path());
 
-    let status = run_with_store(
+    run_with_store(
+        &["cad-cli", "--output", "json", "context", "show"],
+        &credentials(),
+        &store,
+        &profiles,
+        &FakeTerminal::default(),
+    )
+    .await
+    .expect("the environment's key is used");
+
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        bearer(&requests[0]),
+        format!("Bearer {}.secret", Uuid::nil())
+    );
+}
+
+#[tokio::test]
+async fn a_server_given_by_flag_selects_the_profile_whose_server_it_is() {
+    let server = mock_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (store, profiles) = store_with_login(&server.uri(), dir.path());
+
+    // Make another profile the active one: only the server picks `work`.
+    let mut set = profiles.load().unwrap();
+    set.insert(
+        "other".parse().unwrap(),
+        Profile {
+            url: "https://other.example.test".to_owned(),
+            allow_insecure_http: false,
+            login: None,
+        },
+    );
+    set.activate("other".parse().unwrap());
+    profiles.save(&set).unwrap();
+
+    run_with_store(
         &[
             "cad-cli",
             "--server-url",
             &server.uri(),
-            "--allow-insecure-http",
             "--output",
             "json",
             "context",
             "show",
         ],
+        &FakeEnvironment::default(),
         &store,
-        &terminal,
+        &profiles,
+        &FakeTerminal::default(),
     )
     .await
-    .expect("the stored login is enough");
-
-    assert_eq!(status, 0);
+    .expect("the profile whose server it is supplies the login and the opt-in");
     let requests = server.received_requests().await.unwrap();
     assert_eq!(requests.len(), 1);
-    assert_eq!(
-        requests[0]
-            .headers
-            .get("authorization")
-            .unwrap()
-            .to_str()
-            .unwrap(),
-        format!(
-            "Bearer {}.cad_aks_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_AbCde",
-            Uuid::from_u128(0xaa)
-        )
-    );
+    assert_eq!(bearer(&requests[0]), STORED_BEARER);
 }
 
 #[tokio::test]
-async fn an_online_command_without_any_login_fails_before_a_request() {
+async fn a_foreign_server_never_receives_the_active_profiles_key() {
     let server = mock_server().await;
-    let store = crate::support::credentials::memory::empty_store();
-    let terminal = FakeTerminal::default();
+    let foreign = mock_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (store, profiles) = store_with_login(&server.uri(), dir.path());
 
+    // `CAD_SERVER_URL` names another server while `work` is active.
+    let environment = FakeEnvironment(HashMap::from([(
+        "CAD_SERVER_URL".to_owned(),
+        foreign.uri(),
+    )]));
+    let error = run_with_store(
+        &["cad-cli", "--allow-insecure-http", "context", "show"],
+        &environment,
+        &store,
+        &profiles,
+        &FakeTerminal::default(),
+    )
+    .await
+    .expect_err("no stored login may be used for a server that is not the profile's");
+    assert!(matches!(error, CliError::AuthConfig(_)), "{error}");
+    assert!(
+        error.to_string().contains(&format!(
+            "no credentials for {}; set CAD_API_KEY and CAD_API_SECRET, or create a profile \
+             with `cad-cli use profile <name> --url {}`",
+            foreign.uri(),
+            foreign.uri()
+        )),
+        "{error}"
+    );
+    assert!(foreign.received_requests().await.unwrap().is_empty());
+    assert!(server.received_requests().await.unwrap().is_empty());
+
+    // An explicit profile together with a foreign server fails outright.
     let error = run_with_store(
         &[
             "cad-cli",
+            "--profile",
+            "work",
             "--server-url",
-            &server.uri(),
+            &foreign.uri(),
             "--allow-insecure-http",
             "context",
             "show",
         ],
+        &FakeEnvironment::default(),
         &store,
-        &terminal,
+        &profiles,
+        &FakeTerminal::default(),
+    )
+    .await
+    .expect_err("an explicit profile logs in to its own server only");
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "configuration error: profile work logs in to {}, not {}",
+            server.uri(),
+            foreign.uri()
+        )
+    );
+    assert!(foreign.received_requests().await.unwrap().is_empty());
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_profile_without_a_login_fails_before_a_request_naming_the_way_out() {
+    let server = mock_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_, profiles) = store_with_login(&server.uri(), dir.path());
+    let store = crate::support::credentials::memory::empty_store();
+
+    let error = run_with_store(
+        &["cad-cli", "context", "show"],
+        &FakeEnvironment::default(),
+        &store,
+        &profiles,
+        &FakeTerminal::default(),
     )
     .await
     .expect_err("no credentials anywhere");
 
     assert!(matches!(error, CliError::AuthConfig(_)));
-    assert!(error.to_string().contains("cad-cli auth login"));
+    assert_eq!(error.exit_code(), std::process::ExitCode::from(2));
+    assert_eq!(
+        error.to_string(),
+        "authentication configuration error: profile work has no login; run `cad-cli use \
+         profile work --login`, or set CAD_API_KEY and CAD_API_SECRET"
+    );
     assert_eq!(request_paths(&server).await, Vec::<String>::new());
 }
 
 #[tokio::test]
-async fn auth_commands_write_their_data_to_stdout_and_their_lines_to_stderr() {
+async fn use_writes_its_data_to_stdout_and_its_lines_to_stderr() {
     let dir = tempfile::tempdir().unwrap();
     let origin = "http://127.0.0.1:1";
-    let store = store_with_login(origin, dir.path());
+    let (store, profiles) = store_with_login(origin, dir.path());
     let terminal = FakeTerminal::default();
 
     let status = run_with_store(
         &[
-            "cad-cli",
-            "--server-url",
-            origin,
-            "--allow-insecure-http",
-            "--output",
-            "json",
-            "auth",
-            "logout",
+            "cad-cli", "--output", "json", "use", "profile", "work", "--forget",
         ],
+        &FakeEnvironment::default(),
         &store,
+        &profiles,
         &terminal,
     )
     .await
-    .expect("logout needs no server");
+    .expect("forgetting needs no server");
 
     assert_eq!(status, 0);
     let stdout: serde_json::Value = serde_json::from_str(&terminal.stdout()).unwrap();
     assert_eq!(
         stdout,
-        serde_json::json!({"origin": origin, "removed": ["file"]})
+        serde_json::json!({"profile": "work", "removed": ["file"], "wasActive": true})
     );
     let statuses = terminal.statuses();
-    assert_eq!(statuses.len(), 1);
     assert_eq!(statuses[0].0, StatusKind::Success);
-    assert!(statuses[0].1.contains("logged out of"));
+    assert!(statuses[0].1.contains("forgot profile work"));
     assert!(!dir.path().join("cad-cli").join("credentials.json").exists());
+    assert!(profiles.load().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_profile_not_in_the_file_fails_naming_the_command_that_creates_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let (store, profiles) = store_with_login("http://127.0.0.1:1", dir.path());
+    let error = run_with_store(
+        &["cad-cli", "--profile", "nope", "company", "list"],
+        &FakeEnvironment::default(),
+        &store,
+        &profiles,
+        &FakeTerminal::default(),
+    )
+    .await
+    .expect_err("the profile does not exist");
+    assert_eq!(
+        error.to_string(),
+        "configuration error: there is no profile nope; create it with `cad-cli use profile nope`"
+    );
 }

@@ -10,7 +10,7 @@ license = "MIT"
 
 [workspace.dependencies]
 assert_cmd = "2.2.2"
-# The system credential store `cad-cli auth login` keeps API keys in, used by
+# The system credential store `cad-cli use profile` keeps API keys in, used by
 # `cad-client` only: `keyring-core` plus the store of each platform. On Linux
 # the Secret Service is reached through libdbus, vendored so that static musl
 # builds need no system library. The pure-Rust zbus store would add 64 crates,

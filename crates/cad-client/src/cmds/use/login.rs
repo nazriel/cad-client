@@ -1,56 +1,57 @@
-//! `cad-cli auth login`.
+//! The login step of `cad-cli use profile`.
 
-use std::path::{Path, PathBuf};
-
-use cad_api::ApiKeyV2Credentials;
-use cad_api::ids::UserId;
+use cad_api::{ApiKeyV2Credentials, Client, Connected, ServerConfig};
 use chrono::Utc;
 use secrecy::{ExposeSecret, SecretString};
-use serde::Serialize;
 use uuid::Uuid;
 
-use super::{LoginArgs, Report, api_keys_page, connect, environment_decides};
+use super::{api_keys_page, environment_decides};
 use crate::app::context::CommandContext;
-use crate::cli::GlobalArgs;
-use crate::config::{Environment, resolve_timed_server};
+use crate::config::Environment;
 use crate::error::CliError;
-use crate::output::to_value;
 use crate::support::credentials::{
-    CredentialStore, Location, Place, StoreError, StoredCredential, origin_of,
+    CredentialStore, Location, StoreError, StoredCredential, origin_of,
 };
+use crate::support::profiles::{Login, ProfileName};
 use crate::support::terminal::{StatusKind, Terminal};
 
-/// The command's stdout value.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct LoginResult {
-    origin: String,
-    key_id: Uuid,
-    user_id: UserId,
-    affiliated_company_id: cad_api::ids::CompanyId,
-    storage: Place,
-    /// The credentials file, when that is where the key went.
-    path: Option<PathBuf>,
+/// How the key is asked for and where it goes.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Options {
+    pub(super) no_browser: bool,
+    pub(super) with_token: bool,
+    pub(super) insecure_storage: bool,
 }
 
+/// A login that was made and stored, and the lines to show about it.
+pub(super) struct Outcome {
+    pub(super) login: Login,
+    pub(super) messages: Vec<(StatusKind, String)>,
+}
+
+/// Logs `profile` in to `server`: asks for the key, checks it with the server,
+/// stores it, then reads the account's e-mail.
+///
+/// Nothing is stored until the server has accepted the key. Failing to read
+/// the e-mail afterwards is a warning, never a failed login.
 pub(super) async fn run(
-    args: LoginArgs,
+    options: Options,
     context: &CommandContext<'_>,
-    global: &GlobalArgs,
+    profile: &ProfileName,
+    server: ServerConfig,
     environment: &impl Environment,
     store: &CredentialStore,
-) -> Result<Report, CliError> {
+) -> Result<Outcome, CliError> {
     let terminal = context.terminal();
-    let server = resolve_timed_server(global, environment)?;
     let origin = origin_of(&server);
 
     let page = api_keys_page(&origin);
     terminal.status(StatusKind::Info, &format!("API keys page: {page}"))?;
-    if !args.no_browser && !args.with_token {
+    if !options.no_browser && !options.with_token {
         terminal.open_url(&page);
     }
 
-    let (key_id, secret) = if args.with_token {
+    let (key_id, secret) = if options.with_token {
         read_token(terminal)?
     } else if terminal.is_interactive() {
         ask_for_key(terminal)?
@@ -64,28 +65,53 @@ pub(super) async fn run(
 
     // Nothing is stored until the server has accepted the key.
     let credentials = ApiKeyV2Credentials::from_secret(key_id, secret.clone());
-    let session = connect(context, server, credentials).await?.context();
-    let user_id = session.principal.user_id;
+    let client = connect(context, server, credentials).await?;
+    let user_id = client.context().principal.user_id;
 
-    let credential = StoredCredential::api_key(key_id, secret, user_id, Utc::now());
-    let location = save(terminal, store, &origin, &credential, args.insecure_storage)?;
+    let credential = StoredCredential::api_key(origin.clone(), key_id, secret, user_id, Utc::now());
+    let location = save(
+        terminal,
+        store,
+        profile,
+        &credential,
+        options.insecure_storage,
+    )?;
 
-    let result = LoginResult {
-        origin: origin.clone(),
+    let mut messages = Vec::new();
+    let email = match context
+        .during("reading the account", client.users().get(user_id))
+        .await
+    {
+        Ok(user) => user.email,
+        Err(error) => {
+            messages.push((
+                StatusKind::Warning,
+                format!("could not read the e-mail of the account ({error}); the login is stored"),
+            ));
+            None
+        }
+    };
+    let login = Login {
         key_id,
         user_id,
-        affiliated_company_id: session.principal.affiliated_company_id,
+        email,
         storage: location.place(),
-        path: location.path().map(Path::to_path_buf),
+        stored_at: credential.stored_at(),
     };
     let stored_in = location.path().map_or_else(
         || "the system keyring".to_owned(),
         |path| path.display().to_string(),
     );
-    let mut messages = vec![(
-        StatusKind::Success,
-        format!("logged in to {origin} as {user_id}, stored in {stored_in}"),
-    )];
+    messages.insert(
+        0,
+        (
+            StatusKind::Success,
+            format!(
+                "logged in to {origin} as {}, stored in {stored_in}",
+                login.account()
+            ),
+        ),
+    );
     if environment_decides(environment) {
         messages.push((
             StatusKind::Warning,
@@ -94,10 +120,21 @@ pub(super) async fn run(
                 .to_owned(),
         ));
     }
-    Ok(Report {
-        value: to_value(&result)?,
-        messages,
-    })
+    Ok(Outcome { login, messages })
+}
+
+/// Authenticates against `server`, so the identity request runs.
+async fn connect(
+    context: &CommandContext<'_>,
+    server: ServerConfig,
+    credentials: ApiKeyV2Credentials,
+) -> Result<Client<Connected>, CliError> {
+    let connected = context
+        .during("checking the API key with the server", async {
+            Client::new(server)?.connect(credentials).await
+        })
+        .await?;
+    Ok(connected)
 }
 
 /// `<Key ID>.<Secret>` from standard input.
@@ -150,12 +187,12 @@ fn input_error(error: cad_api::Error) -> CliError {
 fn save(
     terminal: &dyn Terminal,
     store: &CredentialStore,
-    origin: &str,
+    profile: &ProfileName,
     credential: &StoredCredential,
     insecure_storage: bool,
 ) -> Result<Location, CliError> {
     if !insecure_storage {
-        match store.save_in_keyring(origin, credential) {
+        match store.save_in_keyring(profile, credential) {
             Ok(()) => return Ok(Location::Keyring),
             Err(StoreError::Failed(error)) => return Err(error),
             Err(StoreError::Unavailable(reason)) => {
@@ -190,5 +227,5 @@ fn save(
             }
         }
     }
-    store.save_in_file(origin, credential).map(Location::File)
+    store.save_in_file(profile, credential).map(Location::File)
 }
