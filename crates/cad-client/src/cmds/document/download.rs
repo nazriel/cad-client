@@ -32,9 +32,11 @@ pub(super) async fn run(
 ) -> Result<Value, CliError> {
     ensure_target(&options.out, options.force)?;
     let temporary = NamedTempFile::new_in(destination_parent(&options.out))?.into_temp_path();
-    // Ctrl-C must unwind rather than kill the process, or the temporary sibling
-    // file is left next to the destination instead of being removed on drop.
-    // Unwinding also drops the progress indicator, which clears its own line.
+    // Ctrl-C must return as an error rather than kill the process, or the
+    // temporary sibling file is left next to the destination instead of being
+    // removed on drop. Returning also drops the progress indicator, which
+    // clears its own line. This is an ordinary return, not a panic, so it holds
+    // under the release profile's `panic = "abort"`.
     let descriptor = context
         .during(&format!("downloading document {}", options.id), async {
             tokio::select! {

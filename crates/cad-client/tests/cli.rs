@@ -78,6 +78,17 @@ fn help_lists_every_command_group_and_exits_zero() {
 }
 
 #[test]
+fn version_prints_the_build_version_of_this_package() {
+    let version = env!("CAD_CLI_BUILD_VERSION");
+    assert!(version.starts_with(env!("CARGO_PKG_VERSION")));
+    cad_cli()
+        .arg("--version")
+        .assert()
+        .success()
+        .stdout(format!("cad-cli {version}\n"));
+}
+
+#[test]
 fn generated_artefacts_need_no_credentials_or_server() {
     // Both are derived from the command definition, so they must run before any
     // configuration is resolved — an unconfigured machine can still install them.

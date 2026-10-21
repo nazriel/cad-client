@@ -55,6 +55,10 @@ jobs:
           github-cache-mode: objects
 
       - run: mise run dist ${{ matrix.targets }}
+        env:
+          # Archives built from anything but a release tag name their commit
+          # in `cad-cli --version`; a tag build prints the plain version.
+          CAD_CLI_BUILD_COMMIT: ${{ !startsWith(github.ref, 'refs/tags/') && github.sha || '' }}
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -103,7 +107,15 @@ jobs:
           for _ in $(seq 30); do curl -fsS -o /dev/null "$url/SHA256SUMS" && break; sleep 1; done
 
           export CAD_CLI_DOWNLOAD_URL="$url" CAD_CLI_VERSION="$version"
-          check() { "$1" --version | grep -Fx "cad-cli ${version#v}"; }
+          # A build of the release tag prints the plain version. Any other
+          # build (main, pull requests) names the commit the dist job passed
+          # in CAD_CLI_BUILD_COMMIT, which is the triggering commit.
+          if [[ "$GITHUB_REF" == "refs/tags/$version" ]]; then
+            expected="cad-cli ${version#v}"
+          else
+            expected="cad-cli ${version#v}-dev+${GITHUB_SHA:0:12}"
+          fi
+          check() { "$1" --version | grep -Fx "$expected"; }
           if [[ "$RUNNER_OS" == Windows ]]; then
             dir="$(cygpath -w "$RUNNER_TEMP")"
             tmp="$(cygpath -u "$RUNNER_TEMP")"

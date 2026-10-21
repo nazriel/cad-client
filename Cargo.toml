@@ -40,6 +40,20 @@ url = { version = "2.5.7", features = ["serde"] }
 uuid = { version = "1.18.1", features = ["serde", "v4"] }
 wiremock = "0.6.5"
 
+# Release builds (`mise run dist`, `cargo install`) trade build time for a
+# smaller executable: no symbol tables (most of the saving), thin LTO in one
+# codegen unit, which keeps most of fat LTO's size win at about half its link
+# time on every rebuild. `panic = "abort"` also drops the unwinding tables: nothing
+# catches a panic (no `catch_unwind`, no spawned task whose panic is joined),
+# so a panic is a bug that ends the process either way. Errors and Ctrl-C
+# cancellation are ordinary returns and still run destructors, so temporary
+# download files are still removed. Test builds always unwind.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
