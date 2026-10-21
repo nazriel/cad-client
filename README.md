@@ -123,10 +123,11 @@ cad-cli --environment staging auth login
 
 `auth login` prints the API keys page and opens it in your browser. The page
 shows the **Key ID** (a UUID) and the **Secret** (`cad_aks_` followed by 43
-letters, digits, `-` or `_`) as two values; paste each when asked. The Secret is
-not echoed. The key is checked with the server before anything is saved, and a
-rejected key is not stored. Create the key on the page first: it cannot be
-created from the command line.
+letters, digits, `-` or `_`) as two values; paste each when asked. A malformed
+value is refused with the reason and asked again, and the Secret is masked with
+`*` as you type. Esc or Ctrl-C cancels. The key is checked with the server
+before anything is saved, and a rejected key is not stored. Create the key on
+the page first: it cannot be created from the command line.
 
 - `--no-browser` only prints the page address.
 - `--with-token` reads `<Key ID>.<Secret>` from standard input instead of
