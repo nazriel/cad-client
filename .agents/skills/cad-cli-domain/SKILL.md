@@ -400,7 +400,7 @@ The Clippy baseline is clean, so any warning is introduced by the change.
 - [ ] API models and identifier newtypes added where appropriate.
 - [ ] Endpoint quirks hidden from public SDK and CLI semantics.
 - [ ] Command group, command help, and online dispatch wired.
-- [ ] Every new command has long-help examples (`after_long_help = help::examples(...)`) and `docs/cli/` is regenerated.
+- [ ] Every new command has help examples (`after_help = help::examples(...)`) and `docs/cli/` is regenerated.
 - [ ] JSON input/output behavior verified for LLM use.
 - [ ] Offline `cad-cli schema <domain>` document generated from the command's Rust input/output types, ID-safe, and tested without credentials.
 - [ ] The delivered schema does not read `openapi_current.json` or a hand-maintained schema artifact.
