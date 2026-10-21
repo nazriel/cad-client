@@ -8,7 +8,6 @@ use std::ffi::OsString;
 use std::io::IsTerminal;
 use std::process::ExitCode;
 
-use cad_api::Client;
 use clap::{ArgMatches, FromArgMatches};
 
 use self::context::CommandContext;
@@ -99,13 +98,11 @@ async fn execute(
         Invocation::Online(online) => online,
     };
 
-    let (server, credentials, company_id) =
-        AppConfig::resolve(&cli.global, environment)?.into_parts();
+    let config = AppConfig::resolve(&cli.global, environment)?;
     // Local preconditions are checked before the identity request so a typo
     // in a path does not cost a network round-trip to fail on.
     check_local_inputs(matches)?;
-    let connected = Client::new(server)?.connect(credentials).await?;
-    let platform = Platform::new(connected, company_id);
+    let platform = Platform::connect(config).await?;
 
     let result = online.run(&command_context, &platform).await?;
 

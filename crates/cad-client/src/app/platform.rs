@@ -2,6 +2,7 @@ use cad_api::ids::CompanyId;
 use cad_api::{Client, Connected};
 
 use crate::adapters::sdk::SdkAdapter;
+use crate::config::AppConfig;
 use crate::error::CliError;
 
 /// The authenticated platform handed to every online command.
@@ -22,6 +23,22 @@ impl Platform {
             connected,
             company_id,
         }
+    }
+
+    /// Authenticates the resolved configuration against its server.
+    ///
+    /// The command bootstrap and shell completion both connect through here, so
+    /// a completion candidate is fetched exactly the way the command it
+    /// completes will later run.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CliError`] if the HTTP client cannot be built or the identity
+    /// request fails.
+    pub(crate) async fn connect(config: AppConfig) -> Result<Self, CliError> {
+        let (server, credentials, company_id) = config.into_parts();
+        let connected = Client::new(server)?.connect(credentials).await?;
+        Ok(Self::new(connected, company_id))
     }
 
     pub(crate) const fn connected(&self) -> &Client<Connected> {
