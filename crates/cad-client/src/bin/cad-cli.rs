@@ -2,6 +2,9 @@ use std::process::ExitCode;
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    // aws-lc-rs, with post-quantum key exchange, for every HTTPS client in
+    // the process; done before anything else so no client can be built first.
+    cad_api::tls::install_crypto_provider();
     // A completion request must stay silent: the shell shows its stderr.
     let filter = if cad_client::completion_requested() {
         tracing_subscriber::EnvFilter::new("off")

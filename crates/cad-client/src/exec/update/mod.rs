@@ -190,6 +190,10 @@ impl ReleaseSource {
                 attempt.error("refusing to follow a redirect to a non-HTTPS URL")
             }
         });
+        // GitHub is not the platform, but downloads get the same rustls
+        // provider as the SDK's clients. `main` installed it already; this
+        // covers the updater's tests, which have no `main`.
+        cad_api::tls::install_crypto_provider();
         let http = reqwest::Client::builder()
             .user_agent(concat!("cad-cli/", env!("CARGO_PKG_VERSION")))
             .connect_timeout(timeout.min(CONNECT_TIMEOUT))

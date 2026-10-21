@@ -28,7 +28,7 @@ pub(crate) fn expected_digest<'a>(sums: &'a str, file: &str) -> Option<&'a str> 
 
 /// Lower-case hexadecimal SHA-256 digest of `bytes`.
 pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = ring::digest::digest(&ring::digest::SHA256, bytes);
+    let digest = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, bytes);
     digest
         .as_ref()
         .iter()

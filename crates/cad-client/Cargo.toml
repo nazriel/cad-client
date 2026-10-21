@@ -16,6 +16,8 @@ name = "cad-cli"
 path = "src/bin/cad-cli.rs"
 
 [dependencies]
+# SHA-256 for verifying downloaded release archives.
+aws-lc-rs.workspace = true
 cad-api = { path = "../cad-api" }
 clap.workspace = true
 clap_complete.workspace = true
@@ -31,7 +33,6 @@ flate2.workspace = true
 humantime.workspace = true
 indicatif.workspace = true
 reqwest.workspace = true
-ring.workspace = true
 schemars.workspace = true
 self-replace.workspace = true
 semver.workspace = true

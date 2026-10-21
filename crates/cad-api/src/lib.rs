@@ -17,6 +17,7 @@ pub mod domains;
 mod error;
 pub mod ids;
 mod protocol;
+pub mod tls;
 mod transport;
 
 pub use auth::{

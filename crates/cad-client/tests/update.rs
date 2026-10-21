@@ -187,7 +187,7 @@ mod replace {
     fn sha256_hex(bytes: &[u8]) -> String {
         use std::fmt::Write as _;
 
-        ring::digest::digest(&ring::digest::SHA256, bytes)
+        aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, bytes)
             .as_ref()
             .iter()
             .fold(String::new(), |mut hex, byte| {

@@ -18,6 +18,8 @@ pub(crate) struct Transport {
 
 impl Transport {
     pub(crate) fn new(config: ServerConfig) -> Result<Self> {
+        // reqwest takes its rustls provider from the process default.
+        crate::tls::install_crypto_provider();
         let api = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(15))
             .timeout(config.request_timeout())

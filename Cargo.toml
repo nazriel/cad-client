@@ -10,6 +10,11 @@ license = "MIT"
 
 [workspace.dependencies]
 assert_cmd = "2.2.2"
+# Already in the graph as rustls' crypto provider; the updater borrows its
+# SHA-256 rather than compiling a second implementation. `prebuilt-nasm` is
+# what rustls selects too: Windows x86_64 links prebuilt assembly objects
+# instead of needing NASM on the build machine.
+aws-lc-rs = { version = "1.18.2", default-features = false, features = ["aws-lc-sys", "prebuilt-nasm"] }
 base64 = "0.23.1"
 chrono = { version = "0.4.42", features = ["serde"] }
 clap = { version = "4.5.48", features = ["derive", "wrap_help"] }
@@ -24,10 +29,16 @@ futures-util = "0.3.31"
 humantime = "2.4.0"
 indicatif = "0.18.6"
 predicates = "3.1.4"
-reqwest = { version = "0.12.23", default-features = false, features = ["json", "rustls-tls", "stream"] }
-# Already in the graph as rustls' crypto provider; the updater borrows its
-# SHA-256 rather than compiling a second implementation.
-ring = "0.17.14"
+# rustls with Mozilla's root store (webpki-roots), as `rustls-tls` gave, but
+# without reqwest's ring provider: clients use rustls' process default, which
+# `cad_api::tls::install_crypto_provider()` sets to aws-lc-rs. A client built
+# with no default installed panics ("No provider set") rather than quietly
+# using another provider.
+reqwest = { version = "0.12.23", default-features = false, features = ["json", "rustls-tls-webpki-roots-no-provider", "stream"] }
+# aws-lc-rs is the provider with the hybrid post-quantum X25519MLKEM768 key
+# exchange; `prefer-post-quantum` orders it first, so the first ClientHello
+# carries its key share. `std` and `tls12` are what reqwest asks of rustls.
+rustls = { version = "0.23.46", default-features = false, features = ["aws_lc_rs", "prefer-post-quantum", "std", "tls12"] }
 schemars = { version = "1.2.1", features = ["chrono04"] }
 secrecy = { version = "0.10.3", features = ["serde"] }
 self-replace = "1.5.0"
@@ -47,6 +58,8 @@ unicode-width = "0.2.1"
 tokio = { version = "1.47.1", default-features = false }
 url = { version = "2.5.7", features = ["serde"] }
 uuid = { version = "1.18.1", features = ["serde", "v4"] }
+# The root store reqwest adds itself; TLS tests build rustls configs from it.
+webpki-roots = "1.0.10"
 wiremock = "0.6.5"
 zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2"] }
 

@@ -181,6 +181,7 @@ mod tests {
     #[tokio::test]
     async fn transport_errors_keep_their_cause_but_never_the_url() {
         // Port 1 on loopback is not listening, so this fails at connect.
+        crate::tls::install_crypto_provider();
         let failure = reqwest::Client::new()
             .get("http://127.0.0.1:1/object?X-Amz-Signature=secret")
             .send()

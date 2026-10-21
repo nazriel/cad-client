@@ -12,6 +12,7 @@ base64.workspace = true
 chrono.workspace = true
 futures-util.workspace = true
 reqwest.workspace = true
+rustls.workspace = true
 schemars.workspace = true
 secrecy.workspace = true
 serde.workspace = true
@@ -26,6 +27,7 @@ uuid.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
+webpki-roots.workspace = true
 wiremock.workspace = true
 
 [lints]
