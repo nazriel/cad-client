@@ -2,19 +2,21 @@
 
 <!-- Generated from the command definitions by `mise run docs:cli`. Do not edit. -->
 
-Show and switch the active profile, and log in.
+Show and switch the active profile, log in, and choose the company.
 
 Without a subcommand it lists the profiles, sorted by name, with the server and the login of each. `active` marks the profile `use profile` last switched to; `selected` marks the one a command run now would use, which differs when `--profile`, `CAD_PROFILE` or a server given with `--server-url` or `CAD_SERVER_URL` picks another. It makes no request.
 
-`use profile <name>` creates, switches to, logs in to and forgets a profile.
+`use profile <name>` creates, switches to, logs in to and forgets a profile. `use company <name|id>` chooses the company the profile acts on, and `use --check` shows, with the server, what a command would use.
 
 ```console
-cad-cli use [OPTIONS] [COMMAND]
+cad-cli use [OPTIONS]
+       cad-cli use <COMMAND>
 ```
 
 | Command | Description |
 |---|---|
 | [`profile`](#cad-cli-use-profile) | Create a profile, switch to it, log in to it, or forget it |
+| [`company`](#cad-cli-use-company) | Choose the company the profile in use acts on |
 
 Every command also accepts the [global options](README.md#global-options).
 
@@ -87,4 +89,42 @@ Forget the profile and the key stored for it:
 
 ```console
 cad-cli use profile staging --forget
+```
+
+## cad-cli use company
+
+Choose the company the profile in use acts on.
+
+The company is given by its name, matched exactly, ignoring case and surrounding spaces, or by its ID. A name several companies share is refused with their IDs. The company must be one the login can act on: it is checked with the server before it is saved.
+
+Commands that act on a company use the profile's company, unless `--company-id` or `CAD_COMPANY_ID` names another. Without any, they refuse to run. This changes the profile for every shell; use `--company-id` for a single command.
+
+```console
+cad-cli use company [OPTIONS] <COMPANY>
+```
+
+### Arguments
+
+| Argument | Description |
+|---|---|
+| `<COMPANY>` | Name or ID of the company. |
+
+### Examples
+
+Act on a company by its name, from now on, with the profile in use:
+
+```console
+cad-cli use company "Acme GmbH"
+```
+
+Act on a company by its ID:
+
+```console
+cad-cli use company 00000000-0000-0000-0000-000000000001
+```
+
+Choose the company of another profile, leaving the active profile as it is:
+
+```console
+cad-cli --profile staging use company "Acme GmbH"
 ```

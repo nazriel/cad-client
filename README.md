@@ -216,11 +216,10 @@ same in the terminal.
 <!-- cli-commands:start -->
 | Command | Description |
 |---|---|
-| [`use`](docs/cli/use.md) | Show and switch the active profile, and log in |
+| [`use`](docs/cli/use.md) | Show and switch the active profile, log in, and choose the company |
 | [`activity-category`](docs/cli/activity-category.md) | Manage the company's activity categories |
 | [`activity-group`](docs/cli/activity-group.md) | Manage the company's activity groups |
 | [`benchmark`](docs/cli/benchmark.md) | Read and update the company benchmark |
-| [`context`](docs/cli/context.md) | Show the authenticated session context |
 | [`company`](docs/cli/company.md) | Inspect and create companies available to the current API key |
 | [`company-template`](docs/cli/company-template.md) | Inspect reusable company templates available to the current API key |
 | [`reporting-period`](docs/cli/reporting-period.md) | Manage reporting periods and duplication jobs |
