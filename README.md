@@ -216,7 +216,7 @@ same in the terminal.
 <!-- cli-commands:start -->
 | Command | Description |
 |---|---|
-| [`auth`](docs/cli/auth.md) | Log in to a server with an API key, check the login and log out |
+| [`use`](docs/cli/use.md) | Show and switch the active profile, and log in |
 | [`activity-category`](docs/cli/activity-category.md) | Manage the company's activity categories |
 | [`activity-group`](docs/cli/activity-group.md) | Manage the company's activity groups |
 | [`benchmark`](docs/cli/benchmark.md) | Read and update the company benchmark |

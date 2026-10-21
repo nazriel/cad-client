@@ -10,7 +10,7 @@ cad-cli [OPTIONS] <COMMAND>
 
 | Command | Description |
 |---|---|
-| [`auth`](auth.md) | Log in to a server with an API key, check the login and log out |
+| [`use`](use.md) | Show and switch the active profile, and log in |
 | [`activity-category`](activity-category.md) | Manage the company's activity categories |
 | [`activity-group`](activity-group.md) | Manage the company's activity groups |
 | [`benchmark`](benchmark.md) | Read and update the company benchmark |
@@ -35,8 +35,8 @@ Every command accepts these options.
 
 | Option | Description |
 |---|---|
-| `--server-url <SERVER_URL>` | Exact application origin. Has precedence over every preset. |
-| `--environment <ENVIRONMENT>` | Select the production or staging application origin. Values: `production`, `staging`. |
+| `--profile <NAME>` | Use this profile instead of the active one (see `cad-cli use`). |
+| `--server-url <SERVER_URL>` | Exact application origin, instead of the profile's. A stored login is used only with the profile whose server this is. |
 | `--company-id <COMPANY_ID>` | Use another accessible company instead of the company from the API-key token. |
 | `--allow-insecure-http` | Permit HTTP for localhost/loopback mock servers. |
 | `--request-timeout <REQUEST_TIMEOUT>` | Total time allowed for one API request, including its response body. Default: `60s`. |
@@ -47,12 +47,12 @@ Every command accepts these options.
 
 | Variable | Description |
 |---|---|
-| `CAD_API_KEY` | Machine API key ID (a UUID). When it or CAD_API_SECRET is set, the environment alone decides which key commands use; otherwise they use the login `cad-cli auth login` stored. |
+| `CAD_PROFILE` | Profile to use instead of the active one. --profile has precedence over it. |
+| `CAD_API_KEY` | Machine API key ID (a UUID). When it or CAD_API_SECRET is set, the environment alone decides which key commands use; otherwise they use the login of the profile. |
 | `CAD_API_SECRET` | Secret of the machine API key. Used with CAD_API_KEY, and instead of a stored login. |
-| `CAD_SERVER_URL` | Exact application origin. Overrides --environment and CAD_ENV, but not --server-url. |
-| `CAD_ENV` | Origin preset when no origin is given: production (prod) or staging (stage). |
+| `CAD_SERVER_URL` | Exact application origin, instead of the profile's. --server-url has precedence over it. A stored login is used only with the profile whose server this is. |
 | `CAD_COMPANY_ID` | Accessible company to act on when --company-id is not given. |
-| `CAD_CLI_KEYRING` | Set to 0 (or false, no, off) to never use the system keyring: `cad-cli auth login` then keeps the key in the credentials file only. For machines without a keyring. |
+| `CAD_CLI_KEYRING` | Set to 0 (or false, no, off) to never use the system keyring: logins are then kept in the credentials file only. For machines without a keyring. |
 | `CAD_CLI_COMPLETE_OFFLINE` | Set to 1 to make shell completion answer from its cache only, without platform requests. |
 | `RUST_LOG` | Diagnostic logging on stderr; cad_api=debug logs one line per platform request. |
 | `NO_COLOR` | Disable colour in tables and status messages. |
@@ -60,10 +60,16 @@ Every command accepts these options.
 
 ## Examples
 
-Check which API key and company the CLI acts as:
+List the profiles and show which one commands use:
 
 ```console
-cad-cli --environment staging context show
+cad-cli use
+```
+
+Check which API key and company the CLI acts as, on another profile:
+
+```console
+cad-cli --profile staging context show
 ```
 
 Print the accessible companies as JSON:
