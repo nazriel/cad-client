@@ -103,8 +103,9 @@ when `CI` or `CAD_CLI_NO_UPDATE_CHECK` is set to a true value: anything but
 empty, `0`, `false`, `no` or `off`, so `CAD_CLI_NO_UPDATE_CHECK=1` turns it off
 and `CAD_CLI_NO_UPDATE_CHECK=0` leaves it on. The time of
 the last check and the version it found are kept in `cad-cli/update-check.json`
-under the user cache directory: `$XDG_CACHE_HOME` (default `~/.cache`) on
-Linux, `~/Library/Caches` on macOS and `%LOCALAPPDATA%` on Windows.
+under the user cache directory: `$XDG_CACHE_HOME` when it is set, else
+`~/.cache` on Linux, `~/Library/Caches` on macOS and `%LOCALAPPDATA%` on
+Windows.
 
 ## Configure
 
