@@ -387,12 +387,12 @@ For writes, also test that the selected resource ID is used consistently in the 
 Run, at minimum:
 
 ```sh
-cargo fmt --check
-cargo test --workspace
+mise run docs:cli   # regenerate docs/cli and the README command table
+mise run check      # rustfmt, Clippy (warnings denied), cargo-deny, rustdoc, tests
 cargo run -p cad-client --bin cad-cli -- <domain> --help
 ````
 
-Run Clippy if the repository baseline permits it. Report pre-existing warnings separately from warnings introduced by the change.
+The Clippy baseline is clean, so any warning is introduced by the change.
 
 ## Completion Checklist
 
@@ -400,6 +400,7 @@ Run Clippy if the repository baseline permits it. Report pre-existing warnings s
 - [ ] API models and identifier newtypes added where appropriate.
 - [ ] Endpoint quirks hidden from public SDK and CLI semantics.
 - [ ] Command group, command help, and online dispatch wired.
+- [ ] Every new command has long-help examples (`after_long_help = help::examples(...)`) and `docs/cli/` is regenerated.
 - [ ] JSON input/output behavior verified for LLM use.
 - [ ] Offline `cad-cli schema <domain>` document generated from the command's Rust input/output types, ID-safe, and tested without credentials.
 - [ ] The delivered schema does not read `openapi_current.json` or a hand-maintained schema artifact.
