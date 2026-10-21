@@ -25,6 +25,9 @@ fn cad_cli() -> Command {
         "CAD_SERVER_URL",
         "CAD_ENV",
         "CAD_COMPANY_ID",
+        "CAD_CLI_COMPLETE_OFFLINE",
+        "COMPLETE",
+        "_CLAP_COMPLETE_INDEX",
         "RUST_LOG",
     ] {
         command.env_remove(key);
@@ -96,7 +99,9 @@ fn generated_artefacts_need_no_credentials_or_server() {
         .args(["completions", "bash"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("cad-cli").and(predicate::str::contains("company")));
+        .stdout(
+            predicate::str::contains("COMPLETE=\"bash\"").and(predicate::str::contains("cad-cli")),
+        );
 
     cad_cli()
         .arg("man")
@@ -291,4 +296,110 @@ async fn rejected_credentials_exit_three() {
         .code(3)
         .stdout(predicate::str::is_empty())
         .stderr(predicate::str::contains("example key rejection"));
+}
+
+#[test]
+fn completions_print_the_same_registration_as_complete_env() {
+    for shell in ["bash", "elvish", "fish", "powershell", "zsh"] {
+        let subcommand = cad_cli()
+            .args(["completions", shell])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let environment = cad_cli()
+            .env("COMPLETE", shell)
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        assert!(!subcommand.is_empty(), "{shell}");
+        assert_eq!(subcommand, environment, "{shell}");
+    }
+}
+
+#[test]
+fn completion_without_credentials_still_completes_commands_quietly() {
+    let cache = tempfile::tempdir().expect("temporary cache directory");
+    cad_cli()
+        .env("COMPLETE", "zsh")
+        .env("XDG_CACHE_HOME", cache.path())
+        .env("_CLAP_COMPLETE_INDEX", "2")
+        .env("RUST_LOG", "debug")
+        .args(["--", "cad-cli", "--company-id", ""])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::is_empty());
+
+    cad_cli()
+        .env("COMPLETE", "zsh")
+        .env("XDG_CACHE_HOME", cache.path())
+        .env("_CLAP_COMPLETE_INDEX", "1")
+        .args(["--", "cad-cli", "reporting-p"])
+        .assert()
+        .success()
+        .stdout(predicate::str::starts_with("reporting-period:"))
+        .stderr(predicate::str::is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn completion_lists_company_ids_from_the_platform_on_stdout_only() {
+    let server = MockServer::start().await;
+    mock_identity(
+        &server,
+        ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "principal": { "userId": Uuid::nil(), "affiliatedCompanyId": COMPANY_ID },
+            "companySelection": { "resolvedCompanyId": COMPANY_ID, "source": "DEFAULT" }
+        })),
+    )
+    .await;
+    Mock::given(method("GET"))
+        .and(path(COMPANIES_PATH))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!([{
+                "id": COMPANY_ID,
+                "name": "Acme",
+                "displayName": "Acme NV",
+                "createdAt": "2026-01-01T00:00:00Z",
+                "isConsultingCompany": false,
+                "isDemoCompany": false,
+                "availableClientCompanies": null,
+                "companyStatus": "ACTIVE"
+            }])),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let cache = tempfile::tempdir().expect("temporary cache directory");
+    let completion = |cache: &std::path::Path| {
+        let mut command = with_credentials();
+        command
+            .env("COMPLETE", "zsh")
+            .env("XDG_CACHE_HOME", cache)
+            .env("_CLAP_COMPLETE_INDEX", "5")
+            .env("RUST_LOG", "debug")
+            .args([
+                "--",
+                "cad-cli",
+                "--server-url",
+                &server.uri(),
+                "--allow-insecure-http",
+                "--company-id",
+                "",
+            ]);
+        command
+    };
+
+    // The first request goes live; the second is answered from the cache,
+    // which `expect(1)` verifies when the server is dropped.
+    for _ in 0..2 {
+        run(completion(cache.path()))
+            .await
+            .success()
+            .stdout(format!("{COMPANY_ID}:Acme NV"))
+            .stderr(predicate::str::is_empty());
+    }
 }

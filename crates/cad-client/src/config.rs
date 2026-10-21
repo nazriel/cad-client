@@ -56,13 +56,7 @@ impl AppConfig {
             .with_request_timeout(args.request_timeout)
             .map_err(CliError::from)?;
 
-        let api_key = environment
-            .get("CAD_API_KEY")
-            .ok_or_else(|| CliError::auth_config("CAD_API_KEY is not set"))?
-            .parse::<Uuid>()
-            .map_err(|error| {
-                CliError::auth_config(format!("CAD_API_KEY is not a UUID: {error}"))
-            })?;
+        let api_key = resolve_api_key_id(environment)?;
 
         let api_secret = environment
             .get("CAD_API_SECRET")
@@ -95,9 +89,21 @@ impl fmt::Debug for AppConfig {
     }
 }
 
+/// Reads the identifier half of the machine API key, never its secret.
+///
+/// Shell completion uses it on its own to tell API keys apart in its cache
+/// without touching `CAD_API_SECRET`.
+pub(crate) fn resolve_api_key_id(environment: &impl Environment) -> Result<Uuid, CliError> {
+    environment
+        .get("CAD_API_KEY")
+        .ok_or_else(|| CliError::auth_config("CAD_API_KEY is not set"))?
+        .parse::<Uuid>()
+        .map_err(|error| CliError::auth_config(format!("CAD_API_KEY is not a UUID: {error}")))
+}
+
 /// Applies the documented precedence: `--server-url`, `CAD_SERVER_URL`,
 /// `--environment`, `CAD_ENV`.
-fn resolve_server(
+pub(crate) fn resolve_server(
     args: &GlobalArgs,
     environment: &impl Environment,
 ) -> Result<ServerConfig, CliError> {
@@ -139,7 +145,7 @@ fn parse_env_preset(value: &str) -> Result<ServerEnvironment, CliError> {
         .map_err(|error| CliError::config(format!("CAD_ENV is invalid: {error}")))
 }
 
-fn resolve_company_id(
+pub(crate) fn resolve_company_id(
     args: &GlobalArgs,
     environment: &impl Environment,
 ) -> Result<Option<CompanyId>, CliError> {

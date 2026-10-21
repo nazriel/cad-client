@@ -103,8 +103,9 @@ when `CI` or `CAD_CLI_NO_UPDATE_CHECK` is set to a true value: anything but
 empty, `0`, `false`, `no` or `off`, so `CAD_CLI_NO_UPDATE_CHECK=1` turns it off
 and `CAD_CLI_NO_UPDATE_CHECK=0` leaves it on. The time of
 the last check and the version it found are kept in `cad-cli/update-check.json`
-under the user cache directory: `$XDG_CACHE_HOME` (default `~/.cache`) on
-Linux, `~/Library/Caches` on macOS and `%LOCALAPPDATA%` on Windows.
+under the user cache directory: `$XDG_CACHE_HOME` when it is set, else
+`~/.cache` on Linux, `~/Library/Caches` on macOS and `%LOCALAPPDATA%` on
+Windows.
 
 ## Configure
 
@@ -155,7 +156,7 @@ same in the terminal.
 | [`custom-option`](docs/cli/custom-option.md) | Manage options belonging to custom fields |
 | [`report`](docs/cli/report.md) | Create and inspect generated reports |
 | [`schema`](docs/cli/schema.md) | Print a machine-readable schema for a CLI resource |
-| [`completions`](docs/cli/completions.md) | Print a shell completion script |
+| [`completions`](docs/cli/completions.md) | Print a shell completion script that also completes IDs from the platform |
 | [`man`](docs/cli/man.md) | Print the manual page in roff format |
 | [`update`](docs/cli/update.md) | Update cad-cli to the latest release |
 <!-- cli-commands:end -->
@@ -398,11 +399,44 @@ cad-cli inventory-line list --filter 'country_inList=PL,,DE' --sort date_desc
 
 ## Shell completions and manual page
 
-`cad-cli completions <shell>` and `cad-cli man` print a completion script and a
-roff manual page generated from the command definition itself, so they never
-drift from the binary. Neither needs credentials or a reachable server; the
-[completions](docs/cli/completions.md) and [man](docs/cli/man.md) references
-show where to install them.
+Completion is dynamic: on Tab, the shell runs `cad-cli` to ask for candidates,
+so commands, options and values never drift from the binary. Load the
+registration from your shell's startup file, which keeps it in step with
+upgrades:
+
+```console
+# ~/.zshrc
+source <(cad-cli completions zsh)
+# ~/.bashrc (bash 3.2, the macOS default, cannot `source <(...)`)
+eval "$(cad-cli completions bash)"
+# ~/.config/fish/config.fish
+cad-cli completions fish | source
+```
+
+`cad-cli completions <shell>` prints exactly what `COMPLETE=<shell> cad-cli`
+prints and needs no credentials or server. Writing the script to a file works
+too; regenerate it after upgrading. The [completions](docs/cli/completions.md)
+and [man](docs/cli/man.md) references show where to install the script and the
+roff manual page.
+
+`--company-id` and the reporting-period IDs of `reporting-period get`,
+`details`, `update` and `delete` are completed from the platform, with the
+company or period name shown beside each ID where the shell supports it. These
+lookups use the same configuration as any other command (`CAD_API_KEY`,
+`CAD_API_SECRET`, the server, and `--company-id` or `CAD_COMPANY_ID` for
+reporting periods) and follow strict rules:
+
+- they never prompt and print nothing but candidates; without credentials or a
+  reachable server the IDs are simply not offered;
+- a live lookup is abandoned after two seconds;
+- answers are cached for an hour in `cad-cli/completions/` under the user cache
+  directory (`$XDG_CACHE_HOME`, else `~/Library/Caches` on macOS, `~/.cache` on
+  Linux and `%LOCALAPPDATA%` on Windows), one file per server, API key, company
+  and resource. When a lookup fails, the last cached answer is used however old
+  it is. The files hold IDs and names only: no secret, and the API key ID only
+  as a hash;
+- `CAD_CLI_COMPLETE_OFFLINE=1` answers from the cache alone and never contacts
+  the platform.
 
 ## License
 

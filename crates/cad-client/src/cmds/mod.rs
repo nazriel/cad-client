@@ -42,6 +42,10 @@ const COMPLETIONS_EXAMPLES: &[Example] = &[
         "cad-cli completions fish > ~/.config/fish/completions/cad-cli.fish",
         "Install fish completions",
     ),
+    Example::new(
+        "cad-cli completions zsh",
+        "Print the zsh script, e.g. to load it with `source <(cad-cli completions zsh)` in ~/.zshrc",
+    ),
 ];
 
 const MAN_EXAMPLES: &[Example] = &[Example::new(
@@ -80,7 +84,18 @@ pub enum Command {
     Report(report::Group),
     /// Print a machine-readable schema for a CLI resource.
     Schema(schema::Group),
-    /// Print a shell completion script.
+    /// Print a shell completion script that also completes IDs from the platform.
+    ///
+    /// The script is the registration for dynamic completion and is identical
+    /// to the output of `COMPLETE=<shell> cad-cli`: on Tab, the shell asks
+    /// `cad-cli` for candidates. Commands, options and values come from the
+    /// command definition; `--company-id` and reporting-period IDs come from
+    /// the platform, using the same `CAD_*` configuration as any other command.
+    /// Platform answers are cached for an hour and are never fetched for longer
+    /// than two seconds; without credentials or a reachable server those IDs
+    /// are simply not offered. Set `CAD_CLI_COMPLETE_OFFLINE=1` to use only the
+    /// cache. Loading the script at shell startup keeps it in step with
+    /// upgrades.
     #[command(after_long_help = help::examples(COMPLETIONS_EXAMPLES))]
     Completions(generate::CompletionsArgs),
     /// Print the manual page in roff format.

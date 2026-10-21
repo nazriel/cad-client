@@ -158,7 +158,7 @@ fn push_command_table(page: &mut String, command: &Command, link: impl Fn(&Comma
             "| [`{}`]({}) | {} |",
             subcommand.get_name(),
             link(subcommand),
-            cell(&about(subcommand))
+            cell(&summary(subcommand))
         );
     }
     page.push('\n');
@@ -239,6 +239,15 @@ fn describe(arg: &Arg) -> String {
         parts.push(format!("Default: {}.", defaults.join(", ")));
     }
     parts.join(" ")
+}
+
+/// The one-line description, for tables; pages use the full [`about`].
+fn summary(command: &Command) -> String {
+    command
+        .get_about()
+        .or_else(|| command.get_long_about())
+        .map(ToString::to_string)
+        .unwrap_or_default()
 }
 
 fn about(command: &Command) -> String {

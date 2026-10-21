@@ -30,6 +30,9 @@ detail; the public SDK method returns one resource or a protocol error.
 `cad-client` owns the executable experience:
 
 - argument parsing and bootstrap in `src/cli/` and `src/app/`;
+- dynamic shell completion in `src/completion/`: the `COMPLETE=<shell>`
+  protocol, value completers that list IDs through the SDK, and their on-disk
+  candidate cache;
 - command groups in `src/cmds/`;
 - input parsing, output rendering, errors, and terminal interaction;
 - multi-request workflows and adapters where a command needs them.

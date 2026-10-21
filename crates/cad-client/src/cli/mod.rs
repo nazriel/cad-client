@@ -39,6 +39,10 @@ const ENVIRONMENT: &[Variable] = &[
         "Accessible company to act on when --company-id is not given",
     ),
     Variable::new(
+        "CAD_CLI_COMPLETE_OFFLINE",
+        "Set to 1 to make shell completion answer from its cache only, without platform requests",
+    ),
+    Variable::new(
         "RUST_LOG",
         "Diagnostic logging on stderr; cad_api=debug logs one line per platform request",
     ),
