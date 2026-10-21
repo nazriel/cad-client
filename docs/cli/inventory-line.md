@@ -32,7 +32,7 @@ cad-cli inventory-line list [OPTIONS]
 |---|---|
 | `--page <PAGE>` | Page to fetch, starting at 1. Default: `1`. |
 | `--limit <LIMIT>` | Lines per page, at most 250. Default: `100`. |
-| `--filter <FILTERS>` | Filter in `attribute_operator=value` form, e.g. `country_inList=PL,DE`; repeat as needed. |
+| `--filter <FILTER>` | Filter in `attribute_operator=value` form, e.g. `country_inList=PL,DE`; repeat as needed. |
 | `--sort <SORT>` | Sort in `attribute_asc` or `attribute_desc` form, e.g. `date_desc`; repeat as needed. |
 
 ### Examples

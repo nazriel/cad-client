@@ -203,7 +203,37 @@ mod tests {
         };
         assert_eq!(options.page, 3);
         assert_eq!(options.limit, 100);
-        assert_eq!(options.filters, ["country_inList=PL,,DE"]);
+        assert_eq!(
+            options.filters,
+            ["country_inList=PL,,DE"
+                .parse::<cad_api::domains::inventory_lines::InventoryFilter>()
+                .expect("a valid filter")]
+        );
+    }
+
+    #[test]
+    fn malformed_inventory_queries_are_usage_errors() {
+        for args in [
+            ["--filter", "country"].as_slice(),
+            &["--filter", "country_bogus=PL"],
+            &["--filter", "country_inList="],
+            &["--sort", "date"],
+            &["--sort", "date_sideways"],
+            &["--page", "0"],
+            &["--limit", "251"],
+        ] {
+            let error = Cli::try_parse_from(
+                ["cad-cli", "inventory-line", "list"]
+                    .into_iter()
+                    .chain(args.iter().copied()),
+            )
+            .expect_err("a malformed inventory query must not parse");
+            assert_eq!(
+                error.kind(),
+                clap::error::ErrorKind::ValueValidation,
+                "{args:?}: {error}"
+            );
+        }
     }
 
     #[test]
