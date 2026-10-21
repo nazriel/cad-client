@@ -1,5 +1,7 @@
 //! `cad-cli auth login`.
 
+use std::path::{Path, PathBuf};
+
 use cad_api::ApiKeyV2Credentials;
 use chrono::Utc;
 use secrecy::{ExposeSecret, SecretString};
@@ -12,7 +14,9 @@ use crate::cli::GlobalArgs;
 use crate::config::{Environment, resolve_timed_server};
 use crate::error::CliError;
 use crate::output::to_value;
-use crate::support::credentials::{CredentialStore, StoreError, StoredCredential, origin_of};
+use crate::support::credentials::{
+    CredentialStore, Location, Place, StoreError, StoredCredential, origin_of,
+};
 use crate::support::terminal::{StatusKind, Terminal};
 
 /// How many times a malformed value is asked for again.
@@ -26,10 +30,9 @@ struct LoginResult {
     key_id: Uuid,
     user_id: Uuid,
     affiliated_company_id: cad_api::ids::CompanyId,
-    /// `keyring` or `file`.
-    storage: &'static str,
+    storage: Place,
     /// The credentials file, when that is where the key went.
-    path: Option<String>,
+    path: Option<PathBuf>,
 }
 
 pub(super) async fn run(
@@ -69,19 +72,18 @@ pub(super) async fn run(
     let credential = StoredCredential::api_key(key_id, secret, user_id, Utc::now());
     let location = save(terminal, store, &origin, &credential, args.insecure_storage)?;
 
-    let (storage, path) = match &location {
-        Saved::Keyring => ("keyring", None),
-        Saved::File(path) => ("file", Some(path.display().to_string())),
-    };
     let result = LoginResult {
         origin: origin.clone(),
         key_id,
         user_id,
         affiliated_company_id: session.principal.affiliated_company_id,
-        storage,
-        path: path.clone(),
+        storage: location.place(),
+        path: location.path().map(Path::to_path_buf),
     };
-    let stored_in = path.unwrap_or_else(|| "the system keyring".to_owned());
+    let stored_in = location.path().map_or_else(
+        || "the system keyring".to_owned(),
+        |path| path.display().to_string(),
+    );
     let mut messages = vec![(
         StatusKind::Success,
         format!("logged in to {origin} as {user_id}, stored in {stored_in}"),
@@ -151,12 +153,6 @@ fn input_error(error: cad_api::Error) -> CliError {
     }
 }
 
-/// Where the key was saved.
-enum Saved {
-    Keyring,
-    File(std::path::PathBuf),
-}
-
 /// Keyring first. When it cannot be used, only a person at a terminal saying
 /// yes, or `--insecure-storage`, writes the secret to the file; `--yes` does
 /// not answer this question.
@@ -166,10 +162,10 @@ fn save(
     origin: &str,
     credential: &StoredCredential,
     insecure_storage: bool,
-) -> Result<Saved, CliError> {
+) -> Result<Location, CliError> {
     if !insecure_storage {
         match store.save_in_keyring(origin, credential) {
-            Ok(()) => return Ok(Saved::Keyring),
+            Ok(()) => return Ok(Location::Keyring),
             Err(StoreError::Failed(error)) => return Err(error),
             Err(StoreError::Unavailable(reason)) => {
                 let path = store.file_path().ok_or_else(|| {
@@ -203,5 +199,5 @@ fn save(
             }
         }
     }
-    store.save_in_file(origin, credential).map(Saved::File)
+    store.save_in_file(origin, credential).map(Location::File)
 }

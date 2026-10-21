@@ -14,8 +14,8 @@ use uuid::Uuid;
 
 use super::memory::MemoryBackend;
 use super::{
-    CredentialStore, FileBackend, Location, Source, StoreError, StoredCredential, keyring_enabled,
-    origin_of, resolve,
+    CredentialStore, FileBackend, Location, Source, SourceKind, StoreError, StoredCredential,
+    keyring_enabled, origin_of, resolve,
 };
 use crate::config::Environment;
 use crate::error::CliError;
@@ -559,7 +559,7 @@ fn the_environment_beats_the_keyring_which_beats_the_file() {
 
     let (key, source) = resolved_key(&environment, &fixture.store).unwrap();
     assert_eq!(key, Uuid::from_u128(1));
-    assert_eq!(source, Source::File(fixture.path.clone()));
+    assert_eq!(source, Source::Stored(Location::File(fixture.path.clone())));
 
     fixture.keyring.put(
         ORIGIN,
@@ -569,7 +569,7 @@ fn the_environment_beats_the_keyring_which_beats_the_file() {
     );
     let (key, source) = resolved_key(&environment, &fixture.store).unwrap();
     assert_eq!(key, Uuid::from_u128(2));
-    assert_eq!(source, Source::Keyring);
+    assert_eq!(source, Source::Stored(Location::Keyring));
 
     let environment = Env::default()
         .with("CAD_API_KEY", &Uuid::from_u128(3).to_string())
@@ -628,7 +628,7 @@ fn a_stored_login_resolves_to_credentials_with_its_metadata() {
     let resolved = resolve(&Env::default(), &fixture.store, ORIGIN).unwrap();
     assert_eq!(resolved.key_id(), KEY_ID);
     assert_eq!(resolved.stored_at(), Some(stored_at()));
-    assert_eq!(resolved.source().name(), "file");
+    assert_eq!(resolved.source().kind(), SourceKind::File);
     assert_eq!(resolved.source().path(), Some(fixture.path.as_path()));
     assert!(resolved.into_credentials().is_ok());
 }

@@ -8,11 +8,12 @@
 //! 4. Otherwise there are none, and the error says how to get some.
 
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use cad_api::ApiKeyV2Credentials;
 use chrono::{DateTime, Utc};
 use secrecy::SecretString;
+use serde::Serialize;
 use uuid::Uuid;
 
 use super::{CredentialStore, Location, StoredCredential};
@@ -23,32 +24,31 @@ use crate::error::CliError;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Source {
     Environment,
+    Stored(Location),
+}
+
+/// [`Source`] without the file's path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum SourceKind {
+    Environment,
     Keyring,
-    File(PathBuf),
+    File,
 }
 
 impl Source {
-    pub(crate) const fn name(&self) -> &'static str {
+    pub(crate) const fn kind(&self) -> SourceKind {
         match self {
-            Self::Environment => "environment",
-            Self::Keyring => "keyring",
-            Self::File(_) => "file",
+            Self::Environment => SourceKind::Environment,
+            Self::Stored(Location::Keyring) => SourceKind::Keyring,
+            Self::Stored(Location::File(_)) => SourceKind::File,
         }
     }
 
     pub(crate) fn path(&self) -> Option<&Path> {
         match self {
-            Self::File(path) => Some(path),
-            Self::Environment | Self::Keyring => None,
-        }
-    }
-}
-
-impl From<Location> for Source {
-    fn from(location: Location) -> Self {
-        match location {
-            Location::Keyring => Self::Keyring,
-            Location::File(path) => Self::File(path),
+            Self::Environment => None,
+            Self::Stored(location) => location.path(),
         }
     }
 }
@@ -114,7 +114,7 @@ pub(crate) fn resolve(
         return Ok(Resolved {
             key_id,
             secret: Some(secret),
-            source: location.into(),
+            source: Source::Stored(location),
             stored_at: Some(stored_at),
         });
     }

@@ -1,5 +1,7 @@
 //! `cad-cli auth status`.
 
+use std::path::{Path, PathBuf};
+
 use cad_api::ids::CompanyId;
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::Serialize;
@@ -11,7 +13,7 @@ use crate::cli::GlobalArgs;
 use crate::config::{Environment, resolve_timed_server};
 use crate::error::CliError;
 use crate::output::to_value;
-use crate::support::credentials::{self, CredentialStore, Source};
+use crate::support::credentials::{self, CredentialStore, Location, Source, SourceKind};
 use crate::support::terminal::StatusKind;
 
 /// The command's stdout value.
@@ -19,10 +21,9 @@ use crate::support::terminal::StatusKind;
 #[serde(rename_all = "camelCase")]
 struct StatusResult {
     origin: String,
-    /// `environment`, `keyring` or `file`.
-    source: &'static str,
+    source: SourceKind,
     /// The credentials file, when that is the source.
-    path: Option<String>,
+    path: Option<PathBuf>,
     key_id: Uuid,
     user_id: Uuid,
     affiliated_company_id: CompanyId,
@@ -49,8 +50,8 @@ pub(super) async fn run(
         .context();
     let result = StatusResult {
         origin: origin.clone(),
-        source: source.name(),
-        path: source.path().map(|path| path.display().to_string()),
+        source: source.kind(),
+        path: source.path().map(Path::to_path_buf),
         key_id,
         user_id: session.principal.user_id,
         affiliated_company_id: session.principal.affiliated_company_id,
@@ -59,8 +60,8 @@ pub(super) async fn run(
     };
     let from = match &source {
         Source::Environment => "CAD_API_KEY and CAD_API_SECRET".to_owned(),
-        Source::Keyring => "the system keyring".to_owned(),
-        Source::File(path) => path.display().to_string(),
+        Source::Stored(Location::Keyring) => "the system keyring".to_owned(),
+        Source::Stored(Location::File(path)) => path.display().to_string(),
     };
     let stored = stored_at.map_or_else(String::new, |time| {
         format!(

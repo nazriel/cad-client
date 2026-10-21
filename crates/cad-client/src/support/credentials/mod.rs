@@ -23,18 +23,20 @@ mod tests;
 use std::path::{Path, PathBuf};
 
 use cad_api::ServerConfig;
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, SubsecRound, Utc};
 use secrecy::{ExposeSecret, SecretString};
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize, Serializer};
+use serde_json::Value;
+use strum::{Display, EnumDiscriminants};
 use uuid::Uuid;
 
 pub(crate) use self::file::FileBackend;
-pub(crate) use self::resolve::{Resolved, Source, resolve};
+pub(crate) use self::resolve::{Resolved, Source, SourceKind, resolve};
 pub(crate) use self::system_keyring::KeyringBackend;
 use crate::config::Environment;
 use crate::error::CliError;
 use crate::support::config_dir::app_config_dir;
+use crate::support::switch::is_off_word;
 
 /// Set to `0`, `false`, `no` or `off` to keep `cad-cli` away from the system
 /// keyring altogether.
@@ -44,38 +46,43 @@ pub(crate) const KEYRING_VARIABLE: &str = "CAD_CLI_KEYRING";
 /// directory.
 const FILE_NAME: &str = "credentials.json";
 
-/// The `kind` of an entry that holds a machine API key.
-const API_KEY_KIND: &str = "apiKey";
-
 /// The origin a server is identified by: `scheme://host[:port]`, lowercased,
 /// without the default port, any path or a trailing slash.
 pub(crate) fn origin_of(server: &ServerConfig) -> String {
     server.base_url().origin().ascii_serialization()
 }
 
-/// A login as it is stored.
-#[derive(Debug, Clone)]
+/// A login as it is stored: a JSON object tagged by `kind`.
+///
+/// [`Kind`], derived from it, names the tags this version knows, so an entry
+/// of another kind is told apart from a damaged one.
+#[derive(Debug, Clone, Serialize, Deserialize, EnumDiscriminants)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[strum_discriminants(name(Kind), derive(Deserialize), serde(rename_all = "camelCase"))]
 pub(crate) enum StoredCredential {
     ApiKey {
         key_id: Uuid,
+        #[serde(serialize_with = "expose_secret")]
         secret: SecretString,
         user_id: Uuid,
         stored_at: DateTime<Utc>,
     },
 }
 
-/// The fields of an `apiKey` entry, in the order they are stored.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ApiKeyEntry {
-    key_id: Uuid,
-    secret: SecretString,
-    user_id: Uuid,
-    stored_at: DateTime<Utc>,
+/// `secrecy` does not serialize a secret on purpose; an entry is the one place
+/// that has to.
+fn expose_secret<S: Serializer>(secret: &SecretString, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(secret.expose_secret())
 }
 
 impl StoredCredential {
-    pub(crate) const fn api_key(
+    /// A new entry. `stored_at` is cut to whole seconds, which is how it is
+    /// stored.
+    pub(crate) fn api_key(
         key_id: Uuid,
         secret: SecretString,
         user_id: Uuid,
@@ -85,7 +92,7 @@ impl StoredCredential {
             key_id,
             secret,
             user_id,
-            stored_at,
+            stored_at: stored_at.trunc_subsecs(0),
         }
     }
 
@@ -101,19 +108,7 @@ impl StoredCredential {
 
     /// The entry as the JSON value both places store.
     pub(crate) fn to_value(&self) -> Value {
-        let Self::ApiKey {
-            key_id,
-            secret,
-            user_id,
-            stored_at,
-        } = self;
-        json!({
-            "kind": API_KEY_KIND,
-            "keyId": key_id,
-            "secret": secret.expose_secret(),
-            "userId": user_id,
-            "storedAt": stored_at.to_rfc3339_opts(SecondsFormat::Secs, true),
-        })
+        serde_json::to_value(self).expect("an entry is plain data and always serializes")
     }
 
     /// Reads an entry stored for `origin`.
@@ -130,27 +125,19 @@ impl StoredCredential {
                  `cad-cli auth login`"
             ))
         })?;
-        match kind {
-            API_KEY_KIND => {
-                let entry: ApiKeyEntry = serde_json::from_value(value).map_err(|error| {
-                    CliError::auth_config(format!(
-                        "the stored credentials for {origin} are damaged ({error}); log in \
-                         again with `cad-cli auth login`"
-                    ))
-                })?;
-                Ok(Self::ApiKey {
-                    key_id: entry.key_id,
-                    secret: entry.secret,
-                    user_id: entry.user_id,
-                    stored_at: entry.stored_at,
-                })
-            }
-            other => Err(CliError::auth_config(format!(
-                "the stored credentials for {origin} are of kind \"{other}\", which this \
+        if serde_json::from_value::<Kind>(Value::from(kind)).is_err() {
+            return Err(CliError::auth_config(format!(
+                "the stored credentials for {origin} are of kind \"{kind}\", which this \
                  version of cad-cli does not know; update cad-cli or log in again with \
                  `cad-cli auth login`"
-            ))),
+            )));
         }
+        serde_json::from_value(value).map_err(|error| {
+            CliError::auth_config(format!(
+                "the stored credentials for {origin} are damaged ({error}); log in again \
+                 with `cad-cli auth login`"
+            ))
+        })
     }
 }
 
@@ -185,11 +172,36 @@ pub(crate) trait Backend: Send + Sync {
     fn remove(&self, origin: &str) -> Result<bool, StoreError>;
 }
 
-/// Where a stored login was found.
+/// One of the two places a login is kept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Display)]
+#[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
+pub(crate) enum Place {
+    Keyring,
+    File,
+}
+
+/// Where a login is kept: the place, and the file's path for the file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Location {
     Keyring,
     File(PathBuf),
+}
+
+impl Location {
+    pub(crate) const fn place(&self) -> Place {
+        match self {
+            Self::Keyring => Place::Keyring,
+            Self::File(_) => Place::File,
+        }
+    }
+
+    pub(crate) fn path(&self) -> Option<&Path> {
+        match self {
+            Self::Keyring => None,
+            Self::File(path) => Some(path),
+        }
+    }
 }
 
 /// What a lookup found, and why the keyring did not answer if it did not.
@@ -205,6 +217,20 @@ pub(crate) struct Removed {
     pub(crate) keyring: bool,
     pub(crate) file: bool,
     pub(crate) keyring_failure: Option<String>,
+}
+
+impl Removed {
+    /// The places an entry was removed from, keyring first.
+    pub(crate) fn places(&self) -> Vec<Place> {
+        let mut places = Vec::new();
+        if self.keyring {
+            places.push(Place::Keyring);
+        }
+        if self.file {
+            places.push(Place::File);
+        }
+        places
+    }
 }
 
 /// The keyring and the file behind one interface.
@@ -369,10 +395,7 @@ fn into_cli_error(error: StoreError) -> CliError {
 /// Whether the system keyring may be used. Only an explicit `0`, `false`,
 /// `no` or `off` turns it off.
 fn keyring_enabled(environment: &impl Environment) -> bool {
-    !environment.get(KEYRING_VARIABLE).is_some_and(|value| {
-        matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "0" | "false" | "no" | "off"
-        )
-    })
+    !environment
+        .get(KEYRING_VARIABLE)
+        .is_some_and(|value| is_off_word(&value))
 }

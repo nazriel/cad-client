@@ -40,6 +40,7 @@ self-replace.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+strum.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 tracing-subscriber.workspace = true

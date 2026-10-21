@@ -7,15 +7,15 @@ use crate::cli::GlobalArgs;
 use crate::config::{Environment, resolve_timed_server};
 use crate::error::CliError;
 use crate::output::to_value;
-use crate::support::credentials::{CredentialStore, origin_of};
+use crate::support::credentials::{CredentialStore, Place, origin_of};
 use crate::support::terminal::StatusKind;
 
 /// The command's stdout value.
 #[derive(Debug, Serialize)]
 struct LogoutResult {
     origin: String,
-    /// The places an entry was removed from: `keyring`, `file`.
-    removed: Vec<&'static str>,
+    /// The places an entry was removed from.
+    removed: Vec<Place>,
 }
 
 /// Removes the selected server's entry from the keyring and the file. It never
@@ -29,13 +29,7 @@ pub(super) fn run(
     let origin = origin_of(&server);
     let removed = store.remove(&origin)?;
 
-    let mut places = Vec::new();
-    if removed.keyring {
-        places.push("keyring");
-    }
-    if removed.file {
-        places.push("file");
-    }
+    let places = removed.places();
     let mut messages = Vec::new();
     if places.is_empty() {
         messages.push((
@@ -48,7 +42,11 @@ pub(super) fn run(
             format!(
                 "logged out of {origin}: removed from {}. The key itself stays valid until it \
                  is revoked at {}",
-                places.join(" and "),
+                places
+                    .iter()
+                    .map(Place::to_string)
+                    .collect::<Vec<_>>()
+                    .join(" and "),
                 api_keys_page(&origin)
             ),
         ));

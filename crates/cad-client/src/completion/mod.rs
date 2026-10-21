@@ -41,6 +41,7 @@ use crate::config::{
     AppConfig, Environment, ProcessEnvironment, resolve_company_id, resolve_server,
 };
 use crate::support::credentials::{self, CredentialStore};
+use crate::support::switch::is_off_word;
 
 /// Name the shell completes, and the program its registration calls back.
 ///
@@ -257,12 +258,9 @@ fn global_args(words: &[OsString]) -> Option<GlobalArgs> {
 }
 
 fn offline(environment: &impl Environment) -> bool {
-    environment.get(OFFLINE_VAR).is_some_and(|value| {
-        !matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "" | "0" | "false" | "no" | "off"
-        )
-    })
+    environment
+        .get(OFFLINE_VAR)
+        .is_some_and(|value| !(value.trim().is_empty() || is_off_word(&value)))
 }
 
 /// Position of the word being completed, as bash and zsh report it.
