@@ -2061,8 +2061,10 @@ async fn a_company_is_chosen_by_id_and_saved_on_the_profile() {
         report.value,
         json!({
             "profile": "local",
-            "company": {"id": OTHER_COMPANY_ID, "name": "Other AG"},
-            "previous": null
+            "companyId": OTHER_COMPANY_ID,
+            "companyName": "Other AG",
+            "previousCompanyId": null,
+            "previousCompanyName": null
         })
     );
     assert_eq!(
@@ -2125,8 +2127,10 @@ async fn a_company_is_chosen_by_name_ignoring_case_and_spaces_and_the_old_one_is
         report.value,
         json!({
             "profile": "local",
-            "company": {"id": COMPANY_ID, "name": "Acme GmbH"},
-            "previous": {"id": OTHER_COMPANY_ID, "name": "Other AG"}
+            "companyId": COMPANY_ID,
+            "companyName": "Acme GmbH",
+            "previousCompanyId": OTHER_COMPANY_ID,
+            "previousCompanyName": "Other AG"
         })
     );
     assert_eq!(
@@ -2169,10 +2173,8 @@ async fn an_id_the_list_does_not_have_is_still_tried_and_has_no_name() {
         .await
         .unwrap();
 
-    assert_eq!(
-        report.value["company"],
-        json!({"id": THIRD_COMPANY_ID, "name": null})
-    );
+    assert_eq!(report.value["companyId"], THIRD_COMPANY_ID);
+    assert_eq!(report.value["companyName"], Value::Null);
     assert_eq!(
         report.messages[0].1,
         format!(
@@ -2230,6 +2232,82 @@ async fn a_name_nobody_has_is_refused_and_a_deleted_company_has_no_name_to_match
 /// Another company with the same name as Acme's, in another case.
 fn acme_twin() -> Value {
     company_json(THIRD_COMPANY_ID, Some("ACME GMBH"), "ACTIVE")
+}
+
+/// A company the platform lists with a `name` and a different `displayName`.
+fn company_called(id: &str, name: Option<&str>, display_name: Option<&str>) -> Value {
+    let mut company = company_json(id, name, "ACTIVE");
+    company["displayName"] = json!(display_name);
+    company
+}
+
+#[tokio::test]
+async fn a_company_is_matched_by_its_name_and_never_by_its_display_name() {
+    let world = world_listing(&[company_called(
+        COMPANY_ID,
+        Some("Acme GmbH"),
+        Some("Acme, the best company"),
+    )])
+    .await;
+    login_local(&world).await;
+    let before = world.set();
+
+    let error = world
+        .run(
+            &["use", "company", "Acme, the best company"],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, CliError::Input(_)));
+    assert_eq!(world.set(), before, "nothing was saved");
+
+    let report = world
+        .run(
+            &["use", "company", "acme gmbh"],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(report.value["companyName"], "Acme GmbH");
+}
+
+#[tokio::test]
+async fn a_multi_line_name_is_one_line_in_the_status_and_in_the_output() {
+    let world = world_listing(&[company_called(
+        COMPANY_ID,
+        Some("  Acme\n\tGmbH \r\n  Holding\n"),
+        Some("A long\ndisplay text"),
+    )])
+    .await;
+    login_local(&world).await;
+
+    let report = world
+        .run(
+            &["use", "company", "acme gmbh holding"],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(report.value["companyName"], "Acme GmbH Holding");
+    assert_eq!(
+        report.messages,
+        [(
+            StatusKind::Success,
+            format!(
+                "Using company Acme GmbH Holding on local ({}) as {EMAIL}",
+                world.origin
+            )
+        )]
+    );
+    assert_eq!(
+        company_of(&world, "local"),
+        Some(chosen(COMPANY_ID, Some("Acme GmbH Holding")))
+    );
 }
 
 #[tokio::test]

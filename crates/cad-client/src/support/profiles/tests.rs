@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use super::{Company, Login, Profile, ProfileName, ProfileSet, ProfileStore};
+use super::{Company, Login, Profile, ProfileName, ProfileSet, ProfileStore, company_label};
 use crate::error::CliError;
 use crate::support::credentials::Place;
 
@@ -211,6 +211,37 @@ fn a_set_round_trips_in_the_documented_shape() {
         .map(|entry| entry.unwrap().file_name())
         .collect();
     assert_eq!(names, ["profiles.json"]);
+}
+
+#[test]
+fn a_platform_company_is_labelled_by_its_name_on_one_line_and_never_by_its_display_name() {
+    let company = |name: Value, display_name: Value| {
+        serde_json::from_value(json!({
+            "id": Uuid::from_u128(0xcc),
+            "name": name,
+            "displayName": display_name,
+            "createdAt": "2026-01-01T00:00:00Z",
+            "isConsultingCompany": false,
+            "isDemoCompany": false,
+            "availableClientCompanies": null,
+            "companyStatus": "ACTIVE"
+        }))
+        .unwrap()
+    };
+
+    assert_eq!(
+        company_label(&company(
+            json!("  Acme\n\tGmbH \r\n  Holding\n"),
+            json!("Long\ntext")
+        )),
+        Some("Acme GmbH Holding".to_owned())
+    );
+    for name in [json!(null), json!(""), json!(" \n\t ")] {
+        assert_eq!(
+            company_label(&company(name, json!("Only a display name"))),
+            None
+        );
+    }
 }
 
 #[test]

@@ -33,6 +33,7 @@ use std::io::{ErrorKind, Write};
 use std::path::PathBuf;
 use std::str::FromStr;
 
+use cad_api::domains::companies::Company as PlatformCompany;
 use cad_api::ids::{CompanyId, UserId};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -146,6 +147,18 @@ impl Login {
 pub(crate) struct Company {
     pub(crate) id: CompanyId,
     pub(crate) name: Option<String>,
+}
+
+/// What the platform's `company` is called: its `name` on one line, every run
+/// of whitespace (newlines included) collapsed to a space. `None` when it has
+/// none. The display name is never used: it can be a long, multi-line text.
+pub(crate) fn company_label(company: &PlatformCompany) -> Option<String> {
+    let name = company
+        .name
+        .as_deref()?
+        .split_whitespace()
+        .collect::<Vec<_>>();
+    (!name.is_empty()).then(|| name.join(" "))
 }
 
 impl Company {

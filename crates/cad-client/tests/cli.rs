@@ -451,7 +451,7 @@ async fn completion_lists_company_ids_from_the_platform_on_stdout_only() {
         run(completion(cache.path()))
             .await
             .success()
-            .stdout(format!("{COMPANY_ID}:Acme NV"))
+            .stdout(format!("{COMPANY_ID}:Acme"))
             .stderr(predicate::str::is_empty());
     }
 }
@@ -1214,8 +1214,10 @@ async fn a_company_scoped_command_needs_a_company_and_use_company_supplies_it() 
         chosen,
         serde_json::json!({
             "profile": "local",
-            "company": {"id": OTHER_ID, "name": "Other AG"},
-            "previous": null
+            "companyId": OTHER_ID,
+            "companyName": "Other AG",
+            "previousCompanyId": null,
+            "previousCompanyName": null
         })
     );
     assert!(String::from_utf8_lossy(&output.stderr).contains(&format!(

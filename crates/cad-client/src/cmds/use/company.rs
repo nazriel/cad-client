@@ -15,7 +15,7 @@ use crate::config::{AppConfig, Environment, resolve_credentials, select, select_
 use crate::error::CliError;
 use crate::output::to_value;
 use crate::support::credentials::{CredentialStore, origin_of};
-use crate::support::profiles::{Company, Login, ProfileName, ProfileStore};
+use crate::support::profiles::{Company, Login, ProfileName, ProfileStore, company_label};
 use crate::support::terminal::StatusKind;
 
 /// The argument of `cad-cli use company`: a company's ID, or its name.
@@ -44,21 +44,11 @@ impl FromStr for CompanyChoice {
 #[serde(rename_all = "camelCase")]
 struct Chosen {
     profile: ProfileName,
-    company: Company,
+    company_id: CompanyId,
+    company_name: Option<String>,
     /// The company the profile had before, if there was one.
-    previous: Option<Company>,
-}
-
-/// What a company is called: its display name, else its name. `None` when it
-/// has neither.
-fn label(company: &PlatformCompany) -> Option<String> {
-    company
-        .display_name
-        .iter()
-        .chain(&company.name)
-        .map(|name| name.trim())
-        .find(|name| !name.is_empty())
-        .map(str::to_owned)
+    previous_company_id: Option<CompanyId>,
+    previous_company_name: Option<String>,
 }
 
 /// The companies a person can choose: the ones that are not deleted.
@@ -84,17 +74,16 @@ fn find(choice: &CompanyChoice, companies: &[PlatformCompany]) -> Result<Company
             let name = companies
                 .iter()
                 .find(|company| company.id == *id)
-                .and_then(label);
+                .and_then(company_label);
             return Ok(Company { id: *id, name });
         }
         CompanyChoice::Name(name) => name,
     };
-    let matches_name = |name: &Option<String>| {
-        name.as_deref()
-            .is_some_and(|name| name.trim().to_lowercase() == wanted.to_lowercase())
-    };
+    let wanted_lowercase = wanted.to_lowercase();
     let mut found: Vec<_> = choosable(companies)
-        .filter(|company| matches_name(&company.name) || matches_name(&company.display_name))
+        .filter(|company| {
+            company_label(company).is_some_and(|name| name.to_lowercase() == wanted_lowercase)
+        })
         .collect();
     found.sort_by_key(|company| company.id);
     match found.as_slice() {
@@ -103,7 +92,7 @@ fn find(choice: &CompanyChoice, companies: &[PlatformCompany]) -> Result<Company
         ))),
         [company] => Ok(Company {
             id: company.id,
-            name: label(company),
+            name: company_label(company),
         }),
         several => {
             let candidates = several
@@ -112,7 +101,7 @@ fn find(choice: &CompanyChoice, companies: &[PlatformCompany]) -> Result<Company
                     format!(
                         "{} {}",
                         company.id,
-                        label(company).unwrap_or_else(|| "-".into())
+                        company_label(company).unwrap_or_else(|| "-".into())
                     )
                 })
                 .collect::<Vec<_>>()
@@ -214,8 +203,10 @@ pub(super) async fn run(
     Ok(Report {
         value: to_value(Chosen {
             profile: name,
-            company,
-            previous,
+            company_id: company.id,
+            company_name: company.name,
+            previous_company_id: previous.as_ref().map(|previous| previous.id),
+            previous_company_name: previous.and_then(|previous| previous.name),
         })?,
         messages,
     })
@@ -262,7 +253,7 @@ pub(super) async fn offer(
     let mut choosable: Vec<_> = choosable(&companies)
         .map(|company| Company {
             id: company.id,
-            name: label(company),
+            name: company_label(company),
         })
         .collect();
     choosable.sort_by_cached_key(|company| (company.label().to_lowercase(), company.id));

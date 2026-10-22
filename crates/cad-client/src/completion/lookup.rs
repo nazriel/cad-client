@@ -10,6 +10,7 @@ use super::cache::Candidate;
 use crate::app::platform::Platform;
 use crate::config::AppConfig;
 use crate::error::CliError;
+use crate::support::profiles::company_label;
 
 /// Upper bound for one live lookup, identity request included. A shell waits
 /// for the answer, so a slow platform must cost a short pause, not a hang.
@@ -62,22 +63,14 @@ fn companies(companies: Vec<Company>) -> Vec<Candidate> {
         .into_iter()
         .filter(|company| company.status != CompanyStatus::Deleted)
         .collect();
-    companies.sort_by_key(label);
+    companies.sort_by_key(company_label);
     companies
         .into_iter()
         .map(|company| {
-            let help = label(&company);
+            let help = company_label(&company);
             Candidate::new(company.id.to_string(), help)
         })
         .collect()
-}
-
-fn label(company: &Company) -> Option<String> {
-    company
-        .display_name
-        .clone()
-        .or_else(|| company.name.clone())
-        .filter(|name| !name.trim().is_empty())
 }
 
 /// Reporting periods, most recent first, labelled with name and date range.

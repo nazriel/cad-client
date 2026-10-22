@@ -589,6 +589,36 @@ async fn company_ids_are_fetched_through_the_sdk_cached_and_reused() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn companies_are_helped_and_sorted_by_name_on_one_line_never_by_display_name() {
+    let server = platform().await;
+    let mut zeta = company(OTHER_COMPANY_ID, "Zeta\n AG", "ACTIVE");
+    zeta["displayName"] = serde_json::json!("Aaa, a long\ndisplay text");
+    let mut acme = company(COMPANY_ID, "Acme GmbH", "ACTIVE");
+    acme["displayName"] = serde_json::json!("Zzz, another display text");
+    Mock::given(method("GET"))
+        .and(path(COMPANIES_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([zeta, acme])))
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+
+    let candidates = complete(
+        Resource::Companies,
+        server_words(&server, &[]),
+        FakeEnvironment::configured(dir.path()),
+    )
+    .await;
+
+    assert_eq!(
+        candidates,
+        [
+            Candidate::new(COMPANY_ID.to_string(), Some("Acme GmbH".to_owned())),
+            Candidate::new(OTHER_COMPANY_ID.to_string(), Some("Zeta AG".to_owned())),
+        ]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn reporting_periods_follow_the_selected_company() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
