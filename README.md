@@ -171,11 +171,13 @@ cad-cli use --check              # check what a command would use with the serve
 cad-cli use profile staging --forget
 ```
 
-`cad-cli use` lists the profiles, sorted by name, with the server, the account
-and the company of each; `active` marks the profile `use profile` last switched
-to, `selected` the one a command run now would use, which differs when
-`--profile`, `CAD_PROFILE` or a server given with `--server-url` or
-`CAD_SERVER_URL` picks another. It reads only your files and makes no request.
+`cad-cli use` lists the profiles, sorted by name, one row each: `name`, `url`,
+`active`, `account` (who the login is for: the e-mail, else the user ID, empty
+without a login), `companyId` and `companyName`. `active` marks the profile
+`use profile` last switched to. The status line names the profile commands use
+now and why; it differs from the active one when `--profile`, `CAD_PROFILE` or
+a server given with `--server-url` or `CAD_SERVER_URL` picks another. It reads
+only your files and makes no request.
 `cad-cli use --check` resolves the profile, server, login and company the way a
 command does, connects once, and prints who the login is for and which company
 is selected, with where each came from; it does not fail for a missing

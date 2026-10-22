@@ -4,7 +4,7 @@
 
 Show and switch the active profile, log in, and choose the company.
 
-Without a subcommand it lists the profiles, sorted by name, with the server and the login of each. `active` marks the profile `use profile` last switched to; `selected` marks the one a command run now would use, which differs when `--profile`, `CAD_PROFILE` or a server given with `--server-url` or `CAD_SERVER_URL` picks another. It makes no request.
+Without a subcommand it lists the profiles, sorted by name, one row each: `name`, `url`, `active`, `account` (who the login is for: the e-mail, else the user ID, empty without a login), `companyId` and `companyName`. `active` marks the profile `use profile` last switched to. The line on stderr names the profile commands use now and why; it differs from the active one when `--profile`, `CAD_PROFILE` or a server given with `--server-url` or `CAD_SERVER_URL` picks another. It makes no request.
 
 `use profile <name>` creates, switches to, logs in to and forgets a profile. `use company <name|id>` chooses the company the profile acts on, and `use --check` shows, with the server, what a command would use.
 
