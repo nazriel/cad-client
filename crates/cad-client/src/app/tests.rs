@@ -2192,3 +2192,158 @@ async fn company_id_dash_when_the_login_can_act_on_no_company_says_so() {
     );
     assert_eq!(terminal.menus(), []);
 }
+
+/// The environment of a stateless run against `server`: the credentials, the
+/// company and the server all given outright, no profile named.
+fn stateless_environment(server: &MockServer) -> FakeEnvironment {
+    let mut environment = credentials();
+    environment.0.insert("CAD_SERVER_URL".into(), server.uri());
+    environment
+}
+
+/// A configuration directory whose `profiles.json` is `content`.
+fn profiles_file(content: &str) -> (tempfile::TempDir, ProfileStore) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cad-cli").join("profiles.json");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, content).unwrap();
+    (dir, ProfileStore::new(Some(path)))
+}
+
+async fn company_list_server() -> MockServer {
+    let server = mock_server().await;
+    Mock::given(method("GET"))
+        .and(path(COMPANIES_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .mount(&server)
+        .await;
+    server
+}
+
+async fn company_list(
+    environment: &FakeEnvironment,
+    profiles: &ProfileStore,
+    terminal: &FakeTerminal,
+) -> Result<u8, CliError> {
+    run_with_store(
+        &[
+            "cad-cli",
+            "--allow-insecure-http",
+            "--output",
+            "json",
+            "company",
+            "list",
+        ],
+        environment,
+        &empty_store(),
+        profiles,
+        terminal,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_stateless_run_ignores_a_profiles_file_that_cannot_be_read() {
+    let server = company_list_server().await;
+    let (dir, profiles) = profiles_file("this is not JSON");
+    let terminal = FakeTerminal::default();
+
+    company_list(&stateless_environment(&server), &profiles, &terminal)
+        .await
+        .expect("a stateless run needs no profile");
+
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&terminal.stdout()).expect("stdout is JSON"),
+        serde_json::json!([])
+    );
+    let statuses = terminal.statuses();
+    assert_eq!(statuses.len(), 2, "{statuses:?}");
+    assert_eq!(statuses[0].0, StatusKind::Warning);
+    let file = dir.path().join("cad-cli").join("profiles.json");
+    assert!(
+        statuses[0].1.starts_with(&format!(
+            "ignoring profiles: {} is not a profiles file (",
+            file.display()
+        )),
+        "{statuses:?}"
+    );
+    assert_eq!(statuses[1], (StatusKind::Warning, "no results".to_owned()));
+}
+
+#[tokio::test]
+async fn a_readable_profiles_file_gives_no_warning_in_a_stateless_run() {
+    let server = company_list_server().await;
+    let (_dir, profiles) = profiles_file("");
+    profiles.save(&ProfileSet::default()).unwrap();
+    let terminal = FakeTerminal::default();
+
+    company_list(&stateless_environment(&server), &profiles, &terminal)
+        .await
+        .expect("a stateless run succeeds");
+
+    assert_eq!(
+        terminal.statuses(),
+        [(StatusKind::Warning, "no results".to_owned())]
+    );
+}
+
+#[tokio::test]
+async fn a_named_profile_does_not_make_a_run_stateless() {
+    let server = company_list_server().await;
+    let (dir, profiles) = profiles_file("this is not JSON");
+    let mut environment = stateless_environment(&server);
+    environment.0.insert("CAD_PROFILE".into(), "work".into());
+    let terminal = FakeTerminal::default();
+
+    let error = company_list(&environment, &profiles, &terminal)
+        .await
+        .expect_err("the profile named needs the file");
+
+    let file = dir.path().join("cad-cli").join("profiles.json");
+    assert!(
+        error.to_string().contains(&file.display().to_string()),
+        "{error}"
+    );
+    assert_eq!(terminal.statuses(), []);
+}
+
+#[tokio::test]
+async fn a_run_with_no_server_given_needs_the_profiles_file() {
+    let server = company_list_server().await;
+    let (dir, profiles) = profiles_file("this is not JSON");
+    let mut environment = stateless_environment(&server);
+    environment.0.remove("CAD_SERVER_URL");
+    let terminal = FakeTerminal::default();
+
+    let error = company_list(&environment, &profiles, &terminal)
+        .await
+        .expect_err("the server comes from a profile");
+
+    let file = dir.path().join("cad-cli").join("profiles.json");
+    assert!(
+        error.to_string().contains(&file.display().to_string()),
+        "{error}"
+    );
+    assert_eq!(terminal.statuses(), []);
+}
+
+#[tokio::test]
+async fn a_run_without_the_environment_credentials_needs_the_profiles_file() {
+    let server = company_list_server().await;
+    let (dir, profiles) = profiles_file("this is not JSON");
+    let mut environment = stateless_environment(&server);
+    environment.0.remove("CAD_API_KEY");
+    environment.0.remove("CAD_API_SECRET");
+    let terminal = FakeTerminal::default();
+
+    let error = company_list(&environment, &profiles, &terminal)
+        .await
+        .expect_err("the login comes from a profile");
+
+    let file = dir.path().join("cad-cli").join("profiles.json");
+    assert!(
+        error.to_string().contains(&file.display().to_string()),
+        "{error}"
+    );
+    assert_eq!(terminal.statuses(), []);
+}

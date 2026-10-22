@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::cli::{CompanyArg, GlobalArgs};
 use crate::error::CliError;
 use crate::support::credentials::{self, CredentialStore, Resolved, Source as CredentialSource};
-use crate::support::profiles::{ProfileName, ProfileSet};
+use crate::support::profiles::{ProfileName, ProfileSet, ProfileStore};
 
 /// Environment access seam used to make resolution deterministic in tests.
 pub trait Environment {
@@ -264,6 +264,35 @@ pub(crate) fn resolve_credentials(
         selection.profile_name(),
         &credentials::origin_of(&selection.server),
     )
+}
+
+/// Loads the profiles a command selects from.
+///
+/// A run is stateless when the environment supplies the credentials (see
+/// [`credentials::environment_decides`]), a server is given outright
+/// (`--server-url`, `CAD_SERVER_URL`) and no profile is named (`--profile`,
+/// `CAD_PROFILE`): nothing in the profiles file can matter to it. A file that
+/// cannot be loaded then does not stop it; the run goes on with no profiles and
+/// the second item is the error that was ignored, for the caller to report.
+/// Every other run fails with the load error.
+///
+/// # Errors
+///
+/// [`CliError`] when `CAD_PROFILE` is invalid, or when the profiles cannot be
+/// loaded and the run is not stateless.
+pub(crate) fn load_profiles(
+    args: &GlobalArgs,
+    environment: &impl Environment,
+    store: &ProfileStore,
+) -> Result<(ProfileSet, Option<CliError>), CliError> {
+    let stateless = credentials::environment_decides(environment)
+        && server_override(args, environment).is_some()
+        && explicit_profile(args, environment)?.is_none();
+    match store.load() {
+        Ok(set) => Ok((set, None)),
+        Err(error) if stateless => Ok((ProfileSet::default(), Some(error))),
+        Err(error) => Err(error),
+    }
 }
 
 /// The profile named by `--profile` or, failing that, `CAD_PROFILE`.

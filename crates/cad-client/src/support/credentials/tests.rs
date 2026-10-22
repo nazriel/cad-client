@@ -14,8 +14,8 @@ use uuid::Uuid;
 
 use super::memory::MemoryBackend;
 use super::{
-    CredentialStore, FileBackend, Location, StoreError, StoredCredential, keyring_enabled,
-    origin_of, resolve,
+    CredentialStore, FileBackend, Location, StoreError, StoredCredential, environment_decides,
+    keyring_enabled, origin_of, resolve,
 };
 use crate::config::Environment;
 use crate::error::CliError;
@@ -827,4 +827,20 @@ fn the_secret_read_from_a_store_is_the_one_stored() {
     let (entry, _) = found(fixture.store.load(&profile()).unwrap());
     let StoredCredential::ApiKey { secret, .. } = entry;
     assert_eq!(secret.expose_secret(), SECRET);
+}
+
+#[test]
+fn the_environment_decides_when_either_half_of_a_login_is_set() {
+    assert!(!environment_decides(&Env::default()));
+    assert!(environment_decides(
+        &Env::default().with("CAD_API_KEY", &KEY_ID.to_string())
+    ));
+    assert!(environment_decides(
+        &Env::default().with("CAD_API_SECRET", SECRET)
+    ));
+    assert!(environment_decides(
+        &Env::default()
+            .with("CAD_API_KEY", &KEY_ID.to_string())
+            .with("CAD_API_SECRET", SECRET)
+    ));
 }

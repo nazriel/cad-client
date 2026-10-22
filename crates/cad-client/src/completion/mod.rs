@@ -44,7 +44,7 @@ use crate::config::{
     AppConfig, Environment, ProcessEnvironment, Selection, resolve_credentials, select,
     select_company,
 };
-use crate::support::credentials::CredentialStore;
+use crate::support::credentials::{self, CredentialStore};
 use crate::support::profiles::{ProfileSet, ProfileStore};
 use crate::support::switch::is_off_word;
 
@@ -331,7 +331,7 @@ fn cache_key_id(
     selection: &Selection,
     profiles: &ProfileSet,
 ) -> Option<Uuid> {
-    if environment.get("CAD_API_KEY").is_some() || environment.get("CAD_API_SECRET").is_some() {
+    if credentials::environment_decides(environment) {
         return environment.get("CAD_API_KEY")?.parse().ok();
     }
     let profile = profiles.get(selection.profile_name()?)?;

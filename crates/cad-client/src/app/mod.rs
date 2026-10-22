@@ -15,7 +15,9 @@ use self::platform::Platform;
 use crate::cli::args::LocalInputPath;
 use crate::cli::{Cli, CompanyArg, OutputFormat, command_with_help_header};
 use crate::cmds::Invocation;
-use crate::config::{AppConfig, Environment, ProcessEnvironment, picking_without_company};
+use crate::config::{
+    AppConfig, Environment, ProcessEnvironment, load_profiles, picking_without_company,
+};
 use crate::error::CliError;
 use crate::exec::update::notice::{self, BackgroundCheck};
 use crate::support::credentials::CredentialStore;
@@ -133,7 +135,13 @@ async fn execute(
         Invocation::Online(online) => online,
     };
 
-    let set = profiles.load()?;
+    let (set, ignored) = load_profiles(&cli.global, environment, profiles)?;
+    if let Some(error) = ignored {
+        terminal.status(
+            StatusKind::Warning,
+            &format!("ignoring profiles: {}", error.message()),
+        )?;
+    }
     let picking = cli.global.company_id == Some(CompanyArg::Pick);
     if picking {
         // `--company-id -` is for a command that acts on a company, and for a

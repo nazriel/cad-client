@@ -42,31 +42,31 @@ fn own() -> CompanyId {
     CompanyId::from(id(1))
 }
 
-fn consultancy() -> Vec<PlatformCompany> {
+fn visible_companies() -> Vec<PlatformCompany> {
     vec![
-        company(1, Some("Consultancy"), "ACTIVE"),
+        company(1, Some("Own company"), "ACTIVE"),
         company(2, Some("Client A"), "ACTIVE"),
         company(3, Some("Client B"), "ACTIVE"),
     ]
 }
 
 #[test]
-fn a_consultancy_admin_with_no_role_gets_only_their_own_company() {
-    let operable = operable(&consultancy(), &[], own());
+fn a_login_with_no_role_gets_only_its_own_company() {
+    let operable = operable(&visible_companies(), &[], own());
     assert_eq!(ids(&operable), [id(1)]);
-    assert_eq!(operable[0].name.as_deref(), Some("Consultancy"));
+    assert_eq!(operable[0].name.as_deref(), Some("Own company"));
 }
 
 #[test]
 fn a_role_in_a_client_company_adds_it_in_label_order() {
     let roles = [role(3, "EXPERT"), role(2, "READ_ONLY")];
     assert_eq!(
-        ids(&operable(&consultancy(), &roles, own())),
+        ids(&operable(&visible_companies(), &roles, own())),
         [id(2), id(3), id(1)]
     );
     let roles = [role(3, "READ_ONLY_LIMITED")];
     assert_eq!(
-        ids(&operable(&consultancy(), &roles, own())),
+        ids(&operable(&visible_companies(), &roles, own())),
         [id(3), id(1)]
     );
 }
@@ -78,19 +78,19 @@ fn admin_rows_and_unknown_roles_add_nothing() {
         role(3, "CAD_ADMIN"),
         role(3, "SOMETHING_NEW"),
     ];
-    assert_eq!(ids(&operable(&consultancy(), &roles, own())), [id(1)]);
+    assert_eq!(ids(&operable(&visible_companies(), &roles, own())), [id(1)]);
 }
 
 #[test]
 fn a_role_in_a_company_the_list_does_not_carry_adds_nothing() {
     let roles = [role(9, "EXPERT")];
-    assert_eq!(ids(&operable(&consultancy(), &roles, own())), [id(1)]);
+    assert_eq!(ids(&operable(&visible_companies(), &roles, own())), [id(1)]);
 }
 
 #[test]
 fn deleted_companies_are_left_out_even_with_a_role_or_as_their_own() {
     let companies = vec![
-        company(1, Some("Consultancy"), "DELETED"),
+        company(1, Some("Own company"), "DELETED"),
         company(2, Some("Client A"), "DELETED"),
         company(3, Some("Client B"), "ACTIVE"),
     ];

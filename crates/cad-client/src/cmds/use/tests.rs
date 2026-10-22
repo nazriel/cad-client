@@ -2344,8 +2344,8 @@ async fn a_refusal_lists_twenty_companies_and_counts_the_rest() {
 
 #[tokio::test]
 async fn the_login_step_sets_the_only_company_the_login_can_act_on() {
-    // A consultancy admin with no role in any client company: the list carries
-    // the clients, but only their own company is one they can act on.
+    // A login with no role in any other company: the list carries several
+    // companies, but only the user's own is one the login can act on.
     let world = world_with_roles(
         &[acme(), other_company(), acme_twin()],
         vec![role_json(OTHER_COMPANY_ID, "ADMIN")],

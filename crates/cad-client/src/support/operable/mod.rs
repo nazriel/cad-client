@@ -1,10 +1,10 @@
 //! The companies a login can act on.
 //!
-//! The companies list is wider than that: for a consultancy admin it carries
-//! every client company of the consultancy, while a key can act only in its
-//! own company and in the companies its user holds a role in. `use company`,
-//! the choice offered after a login and shell completion all offer the narrower
-//! list, so this lives in `support`, where each of them can reach it.
+//! The companies a key can see can be more than the ones it can act on: a login
+//! acts only in its user's own company and in the companies the user holds a
+//! role in. `use company`, the choice offered after a login and shell
+//! completion all offer that narrower list, so this lives in `support`, where
+//! each of them can reach it.
 
 #[cfg(test)]
 mod tests;

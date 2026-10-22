@@ -69,6 +69,13 @@ impl Resolved {
     }
 }
 
+/// Whether the environment alone supplies the credentials: `CAD_API_KEY` or
+/// `CAD_API_SECRET` is set, even when the other half is missing. A stored login
+/// is then never consulted.
+pub(crate) fn environment_decides(environment: &impl Environment) -> bool {
+    environment.get("CAD_API_KEY").is_some() || environment.get("CAD_API_SECRET").is_some()
+}
+
 /// Finds the credentials for `origin`, the server selected, on behalf of
 /// `profile`, the profile selected, if there is one.
 ///
@@ -83,7 +90,7 @@ pub(crate) fn resolve(
     profile: Option<&ProfileName>,
     origin: &str,
 ) -> Result<Resolved, CliError> {
-    if environment.get("CAD_API_KEY").is_some() || environment.get("CAD_API_SECRET").is_some() {
+    if environment_decides(environment) {
         return from_environment(environment);
     }
     let Some(profile) = profile else {
