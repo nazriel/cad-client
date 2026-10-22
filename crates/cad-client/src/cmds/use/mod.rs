@@ -134,8 +134,10 @@ pub(crate) enum Command {
     ///
     /// The company is given by its name, matched exactly, ignoring case and
     /// surrounding spaces, or by its ID. A name several companies share is
-    /// refused with their IDs. The company must be one the login can act on:
-    /// it is checked with the server before it is saved.
+    /// refused with their IDs. The company must be one the login can act on,
+    /// your own company or one you hold a role in; `company list` shows every
+    /// company the key can see. It is checked with the server before it is
+    /// saved.
     ///
     /// Commands that act on a company use the profile's company, unless
     /// `--company-id` or `CAD_COMPANY_ID` names another. Without any, they

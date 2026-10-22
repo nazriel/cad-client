@@ -2,7 +2,6 @@
 
 use std::time::Duration;
 
-use cad_api::domains::companies::{Company, CompanyStatus};
 use cad_api::domains::reporting_periods::ReportingPeriod;
 
 use super::Resource;
@@ -10,7 +9,8 @@ use super::cache::Candidate;
 use crate::app::platform::Platform;
 use crate::config::AppConfig;
 use crate::error::CliError;
-use crate::support::profiles::company_label;
+use crate::support::operable::operable_companies;
+use crate::support::profiles::Company;
 
 /// Upper bound for one live lookup, identity request included. A shell waits
 /// for the answer, so a slow platform must cost a short pause, not a hang.
@@ -43,9 +43,9 @@ pub(crate) fn fetch(resource: Resource, config: AppConfig) -> Option<Vec<Candida
 async fn list(resource: Resource, config: AppConfig) -> Result<Vec<Candidate>, CliError> {
     let platform = Platform::connect(config).await?;
     Ok(match resource {
-        // Companies are a session-level list: any authenticated client may
-        // ask for them.
-        Resource::Companies => companies(platform.connected().companies().list().await?),
+        // The companies the login can act on are a session-level answer: it
+        // needs no company, only the identity.
+        Resource::OperableCompanies => companies(operable_companies(platform.connected()).await?),
         // Reporting periods belong to one company, so they need the
         // company-scoped client (`--company-id`, `CAD_COMPANY_ID`, or the
         // profile's company); the SDK's typestate offers the call only on
@@ -57,19 +57,11 @@ async fn list(resource: Resource, config: AppConfig) -> Result<Vec<Candidate>, C
     })
 }
 
-/// Companies a `--company-id` can switch to, by name; deleted ones cannot.
+/// Companies a `--company-id` can switch to, by name.
 fn companies(companies: Vec<Company>) -> Vec<Candidate> {
-    let mut companies: Vec<_> = companies
-        .into_iter()
-        .filter(|company| company.status != CompanyStatus::Deleted)
-        .collect();
-    companies.sort_by_key(company_label);
     companies
         .into_iter()
-        .map(|company| {
-            let help = company_label(&company);
-            Candidate::new(company.id.to_string(), help)
-        })
+        .map(|company| Candidate::new(company.id.to_string(), company.name))
         .collect()
 }
 

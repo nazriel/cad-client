@@ -2,7 +2,6 @@
 
 use std::str::FromStr;
 
-use cad_api::domains::companies::{Company as PlatformCompany, CompanyStatus};
 use cad_api::ids::CompanyId;
 use cad_api::{Client, Connected};
 use serde::Serialize;
@@ -15,7 +14,8 @@ use crate::config::{AppConfig, Environment, resolve_credentials, select, select_
 use crate::error::CliError;
 use crate::output::to_value;
 use crate::support::credentials::{CredentialStore, origin_of};
-use crate::support::profiles::{Company, Login, ProfileName, ProfileStore, company_label};
+use crate::support::operable::operable_companies;
+use crate::support::profiles::{Company, Login, ProfileName, ProfileStore};
 use crate::support::terminal::StatusKind;
 
 /// The argument of `cad-cli use company`: a company's ID, or its name.
@@ -51,64 +51,74 @@ struct Chosen {
     previous_company_name: Option<String>,
 }
 
-/// The companies a person can choose: the ones that are not deleted.
-fn choosable(companies: &[PlatformCompany]) -> impl Iterator<Item = &PlatformCompany> {
-    companies
+/// How many companies a refusal lists before it counts the rest.
+const LISTED: usize = 20;
+
+/// The refusal for something that is not among `operable`: `head`, then the
+/// companies the login can act on, one `<id> <name>` per line.
+fn refusal(head: &str, operable: &[Company]) -> CliError {
+    if operable.is_empty() {
+        return CliError::Input(format!("{head}; it can act on no company"));
+    }
+    let mut lines: Vec<_> = operable
         .iter()
-        .filter(|company| company.status != CompanyStatus::Deleted)
+        .take(LISTED)
+        .map(|company| format!("{} {}", company.id, company.name.as_deref().unwrap_or("-")))
+        .collect();
+    if operable.len() > LISTED {
+        lines.push(format!("… and {} more", operable.len() - LISTED));
+    }
+    CliError::Input(format!("{head}; it can act on:\n{}", lines.join("\n")))
 }
 
-/// Finds the company `choice` names among `companies`.
+/// Finds the company `choice` names among `operable`, the companies the login
+/// can act on.
 ///
-/// An ID selects by ID, even one that is not in the list: whether it can be
-/// used is for the platform to say. A name is matched exactly against the
-/// names, trimmed and ignoring case.
+/// A name is matched exactly against the names, trimmed and ignoring case.
 ///
 /// # Errors
 ///
-/// [`CliError::Input`] when no company has that name, or several do; the
-/// latter lists them with their IDs.
-fn find(choice: &CompanyChoice, companies: &[PlatformCompany]) -> Result<Company, CliError> {
+/// [`CliError::Input`] when the company is not among them, or several have that
+/// name; both list the companies with their IDs.
+fn find(choice: &CompanyChoice, operable: &[Company]) -> Result<Company, CliError> {
     let wanted = match choice {
         CompanyChoice::Id(id) => {
-            let name = companies
+            return operable
                 .iter()
                 .find(|company| company.id == *id)
-                .and_then(company_label);
-            return Ok(Company { id: *id, name });
+                .cloned()
+                .ok_or_else(|| {
+                    refusal(&format!("your login cannot act on company {id}"), operable)
+                });
         }
         CompanyChoice::Name(name) => name,
     };
     let wanted_lowercase = wanted.to_lowercase();
-    let mut found: Vec<_> = choosable(companies)
+    let mut found: Vec<_> = operable
+        .iter()
         .filter(|company| {
-            company_label(company).is_some_and(|name| name.to_lowercase() == wanted_lowercase)
+            company
+                .name
+                .as_ref()
+                .is_some_and(|name| name.to_lowercase() == wanted_lowercase)
         })
         .collect();
     found.sort_by_key(|company| company.id);
     match found.as_slice() {
-        [] => Err(CliError::Input(format!(
-            "no accessible company is named \"{wanted}\"; list them with `cad-cli company list`"
-        ))),
-        [company] => Ok(Company {
-            id: company.id,
-            name: company_label(company),
-        }),
+        [] => Err(refusal(
+            &format!("no company your login can act on is named \"{wanted}\""),
+            operable,
+        )),
+        [company] => Ok((*company).clone()),
         several => {
             let candidates = several
                 .iter()
-                .map(|company| {
-                    format!(
-                        "{} {}",
-                        company.id,
-                        company_label(company).unwrap_or_else(|| "-".into())
-                    )
-                })
+                .map(|company| format!("{} {}", company.id, company.label()))
                 .collect::<Vec<_>>()
                 .join("\n");
             Err(CliError::Input(format!(
-                "several accessible companies are named \"{wanted}\"; use the ID of the one you \
-                 mean:\n{candidates}"
+                "several companies your login can act on are named \"{wanted}\"; use the ID of \
+                 the one you mean:\n{candidates}"
             )))
         }
     }
@@ -152,10 +162,10 @@ pub(super) async fn run(
         )
         .await?;
     let client = platform.connected();
-    let companies = context
-        .during("listing the companies", client.companies().list())
+    let operable = context
+        .during("listing the companies", operable_companies(client))
         .await?;
-    let company = find(&args.company, &companies)?;
+    let company = find(&args.company, &operable)?;
     context
         .during(
             "checking access to the company",
@@ -219,7 +229,7 @@ pub(super) struct Offer {
 }
 
 /// Settles the company of a profile that has none, from the session its login
-/// made: the only company is taken; with several, a person at a terminal
+/// made: of the companies the login can act on, the only one is taken; with several, a person at a terminal
 /// chooses and anyone else is told how. It never fails the login: whatever
 /// goes wrong leaves the company unset, with the way to set it.
 ///
@@ -232,8 +242,8 @@ pub(super) async fn offer(
     profile: &ProfileName,
 ) -> Result<Offer, CliError> {
     let hint = (StatusKind::Warning, no_company());
-    let companies = match context
-        .during("listing the companies", client.companies().list())
+    let operable = match context
+        .during("listing the companies", operable_companies(client))
         .await
     {
         Ok(companies) => companies,
@@ -250,16 +260,8 @@ pub(super) async fn offer(
             });
         }
     };
-    let mut choosable: Vec<_> = choosable(&companies)
-        .map(|company| Company {
-            id: company.id,
-            name: company_label(company),
-        })
-        .collect();
-    choosable.sort_by_cached_key(|company| (company.label().to_lowercase(), company.id));
-
     let terminal = context.terminal();
-    let company = match choosable.as_slice() {
+    let company = match operable.as_slice() {
         [] => None,
         [only] => Some(only.clone()),
         several if terminal.is_interactive() => {

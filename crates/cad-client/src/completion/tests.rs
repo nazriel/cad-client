@@ -9,7 +9,7 @@ use clap::CommandFactory;
 use clap_complete::Shell;
 use clap_complete::engine::ArgValueCompleter;
 use uuid::Uuid;
-use wiremock::matchers::{header, method, path};
+use wiremock::matchers::{header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use super::cache::{self, Cache, CacheKey, Candidate, Network, TTL};
@@ -26,6 +26,7 @@ const COMPANY_ID: Uuid = Uuid::from_u128(0x42);
 const OTHER_COMPANY_ID: Uuid = Uuid::from_u128(0x77);
 const IDENTITY_PATH: &str = "/api/auth/v2/machine/identity";
 const COMPANIES_PATH: &str = "/api/accounts/v1/companies";
+const USER_ROLES_PATH: &str = "/api/accounts/v1/user-roles";
 const REPORTING_PERIODS_PATH: &str = "/api/reporting-periods/v1/reporting-periods";
 const NO_CANDIDATES: [Candidate; 0] = [];
 
@@ -67,7 +68,7 @@ fn candidate(value: &str) -> Candidate {
 }
 
 fn key() -> CacheKey {
-    CacheKey::session("companies", "https://example.test/", API_KEY)
+    CacheKey::session("operable-companies", "https://example.test/", API_KEY)
 }
 
 fn hours_ago(hours: u64) -> SystemTime {
@@ -255,7 +256,7 @@ fn cache_writes_are_atomic_and_leave_no_temporary_files() {
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     assert_eq!(names.len(), 1, "{names:?}");
-    assert!(names[0].starts_with("companies-"), "{names:?}");
+    assert!(names[0].starts_with("operable-companies-"), "{names:?}");
     assert_eq!(
         Path::new(&names[0])
             .extension()
@@ -280,9 +281,9 @@ fn cache_keys_isolate_servers_api_keys_companies_and_resources() {
     let cache = Cache::at(dir.path().to_owned());
     let other_key = Uuid::from_u128(1);
     let keys = [
-        CacheKey::session("companies", "https://a.test/", API_KEY),
-        CacheKey::session("companies", "https://b.test/", API_KEY),
-        CacheKey::session("companies", "https://a.test/", other_key),
+        CacheKey::session("operable-companies", "https://a.test/", API_KEY),
+        CacheKey::session("operable-companies", "https://b.test/", API_KEY),
+        CacheKey::session("operable-companies", "https://a.test/", other_key),
         CacheKey::company(
             "reporting-periods",
             "https://a.test/",
@@ -412,7 +413,7 @@ fn without_credentials_nothing_is_completed_and_nothing_is_cached() {
         "https://staging.carbonaltdelete.eu",
     ]);
 
-    for resource in [Resource::Companies, Resource::ReportingPeriods] {
+    for resource in [Resource::OperableCompanies, Resource::ReportingPeriods] {
         assert_eq!(
             candidates(
                 resource,
@@ -434,7 +435,7 @@ fn without_a_server_nothing_is_completed() {
     let environment = FakeEnvironment::configured(dir.path());
     assert_eq!(
         candidates(
-            Resource::Companies,
+            Resource::OperableCompanies,
             &words(&["cad-cli"]),
             &environment,
             &empty_store(),
@@ -488,6 +489,26 @@ fn company(id: Uuid, name: &str, status: &str) -> serde_json::Value {
         "availableClientCompanies": null,
         "companyStatus": status
     })
+}
+
+/// A role of the identity's user (`Uuid::nil()`) in `company`.
+fn role(company: Uuid, role: &str) -> serde_json::Value {
+    serde_json::json!({
+        "id": Uuid::new_v4(),
+        "userId": Uuid::nil(),
+        "companyId": company,
+        "userRole": role
+    })
+}
+
+/// Mounts the roles of the identity's user, the way the platform filters them.
+async fn mount_roles(server: &MockServer, roles: &[serde_json::Value]) {
+    Mock::given(method("GET"))
+        .and(path(USER_ROLES_PATH))
+        .and(query_param("userId_equals", Uuid::nil().to_string()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(roles))
+        .mount(server)
+        .await;
 }
 
 fn period(id: u128, short_name: &str, start: &str, end: &str) -> serde_json::Value {
@@ -550,7 +571,21 @@ async fn company_ids_are_fetched_through_the_sdk_cached_and_reused() {
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
             company(OTHER_COMPANY_ID, "Zeta AG", "ACTIVE"),
             company(Uuid::from_u128(0x99), "Gone GmbH", "DELETED"),
+            company(Uuid::from_u128(0x98), "Client GmbH", "ACTIVE"),
             company(COMPANY_ID, "Acme GmbH", "ACTIVE"),
+        ])))
+        .expect(1)
+        .mount(&server)
+        .await;
+    // Zeta is held through a role, Gone is deleted, Client is visible with
+    // no role that grants it: it is not offered.
+    Mock::given(method("GET"))
+        .and(path(USER_ROLES_PATH))
+        .and(query_param("userId_equals", Uuid::nil().to_string()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            role(OTHER_COMPANY_ID, "EXPERT"),
+            role(Uuid::from_u128(0x99), "EXPERT"),
+            role(Uuid::from_u128(0x98), "ADMIN"),
         ])))
         .expect(1)
         .mount(&server)
@@ -558,7 +593,7 @@ async fn company_ids_are_fetched_through_the_sdk_cached_and_reused() {
     let dir = tempfile::tempdir().unwrap();
 
     let first = complete(
-        Resource::Companies,
+        Resource::OperableCompanies,
         server_words(&server, &[]),
         FakeEnvironment::configured(dir.path()),
     )
@@ -572,9 +607,9 @@ async fn company_ids_are_fetched_through_the_sdk_cached_and_reused() {
     );
 
     // The second Tab press is answered from the cache: `expect(1)` above fails
-    // the test on drop if the companies endpoint is called again.
+    // the test on drop if the companies or roles endpoint is called again.
     let second = complete(
-        Resource::Companies,
+        Resource::OperableCompanies,
         server_words(&server, &["company", "list"]),
         FakeEnvironment::configured(dir.path()),
     )
@@ -601,10 +636,11 @@ async fn companies_are_helped_and_sorted_by_name_on_one_line_never_by_display_na
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([zeta, acme])))
         .mount(&server)
         .await;
+    mount_roles(&server, &[role(OTHER_COMPANY_ID, "READ_ONLY")]).await;
     let dir = tempfile::tempdir().unwrap();
 
     let candidates = complete(
-        Resource::Companies,
+        Resource::OperableCompanies,
         server_words(&server, &[]),
         FakeEnvironment::configured(dir.path()),
     )
@@ -757,6 +793,7 @@ async fn reporting_periods_offer_nothing_when_no_company_is_selected_at_all() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failing_platform_falls_back_to_the_stale_list() {
     let server = platform().await;
+    mount_roles(&server, &[]).await;
     Mock::given(method("GET"))
         .and(path(COMPANIES_PATH))
         .respond_with(ResponseTemplate::new(500))
@@ -767,14 +804,14 @@ async fn a_failing_platform_falls_back_to_the_stale_list() {
     let cache = Cache::from_environment(&FakeEnvironment::configured(dir.path())).unwrap();
     cache
         .write(
-            &CacheKey::session("companies", &origin, API_KEY),
+            &CacheKey::session("operable-companies", &origin, API_KEY),
             &[candidate("stale")],
             hours_ago(48),
         )
         .unwrap();
 
     let values = complete(
-        Resource::Companies,
+        Resource::OperableCompanies,
         server_words(&server, &[]),
         FakeEnvironment::configured(dir.path()),
     )
@@ -799,7 +836,7 @@ async fn a_slow_platform_is_abandoned_after_the_live_timeout() {
 
     let started = Instant::now();
     let values = complete(
-        Resource::Companies,
+        Resource::OperableCompanies,
         server_words(&server, &[]),
         FakeEnvironment::configured(dir.path()),
     )
@@ -819,7 +856,7 @@ async fn offline_mode_never_contacts_the_platform() {
     let dir = tempfile::tempdir().unwrap();
 
     let values = complete(
-        Resource::Companies,
+        Resource::OperableCompanies,
         server_words(&server, &[]),
         FakeEnvironment::configured(dir.path()).with(super::OFFLINE_VAR, "1"),
     )
@@ -827,6 +864,32 @@ async fn offline_mode_never_contacts_the_platform() {
 
     assert_eq!(values, NO_CANDIDATES);
     assert_eq!(server.received_requests().await.unwrap().len(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_entry_cached_before_the_companies_were_narrowed_is_never_served() {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let environment = FakeEnvironment::configured(dir.path()).with(super::OFFLINE_VAR, "1");
+    // What an earlier version cached under the old resource name: every
+    // company the key can see.
+    Cache::from_environment(&environment)
+        .unwrap()
+        .write(
+            &CacheKey::session("companies", &format!("{}/", server.uri()), API_KEY),
+            &[candidate("a-company-the-login-cannot-act-on")],
+            SystemTime::now(),
+        )
+        .unwrap();
+
+    let values = complete(
+        Resource::OperableCompanies,
+        server_words(&server, &[]),
+        environment,
+    )
+    .await;
+
+    assert_eq!(values, NO_CANDIDATES);
 }
 
 fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
@@ -953,6 +1016,7 @@ async fn a_stored_login_keys_the_cache_and_authenticates_the_live_lookup() {
         .respond_with(ResponseTemplate::new(200).set_body_json(identity(COMPANY_ID)))
         .mount(&server)
         .await;
+    mount_roles(&server, &[]).await;
     Mock::given(method("GET"))
         .and(path(COMPANIES_PATH))
         .respond_with(
@@ -975,7 +1039,7 @@ async fn a_stored_login_keys_the_cache_and_authenticates_the_live_lookup() {
 
     let run = || {
         candidates(
-            Resource::Companies,
+            Resource::OperableCompanies,
             &line,
             &environment,
             &store,
@@ -1040,7 +1104,7 @@ fn without_a_stored_login_nothing_is_completed_and_the_keyring_is_read_once() {
 
     assert_eq!(
         candidates(
-            Resource::Companies,
+            Resource::OperableCompanies,
             &line,
             &environment,
             &store,
@@ -1068,14 +1132,18 @@ fn the_environment_is_not_overridden_by_a_stored_login_in_completion() {
     let cache = Cache::from_environment(&environment).unwrap();
     cache
         .write(
-            &CacheKey::session("companies", "https://staging.carbonaltdelete.eu/", API_KEY),
+            &CacheKey::session(
+                "operable-companies",
+                "https://staging.carbonaltdelete.eu/",
+                API_KEY,
+            ),
             &[candidate("from-cache")],
             SystemTime::now(),
         )
         .unwrap();
 
     let values = candidates(
-        Resource::Companies,
+        Resource::OperableCompanies,
         &words(&[
             "cad-cli",
             "--server-url",
@@ -1098,6 +1166,7 @@ async fn the_profile_flag_and_the_server_it_picks_complete_with_that_profiles_lo
         .respond_with(ResponseTemplate::new(200).set_body_json(identity(COMPANY_ID)))
         .mount(&server)
         .await;
+    mount_roles(&server, &[]).await;
     Mock::given(method("GET"))
         .and(path(COMPANIES_PATH))
         .respond_with(
@@ -1138,7 +1207,7 @@ async fn the_profile_flag_and_the_server_it_picks_complete_with_that_profiles_lo
     ] {
         let values = tokio::task::block_in_place(|| {
             candidates(
-                Resource::Companies,
+                Resource::OperableCompanies,
                 &line,
                 &environment,
                 &store,
@@ -1151,7 +1220,7 @@ async fn the_profile_flag_and_the_server_it_picks_complete_with_that_profiles_lo
     // The active profile has no login, and the answer says nothing.
     assert_eq!(
         tokio::task::block_in_place(|| candidates(
-            Resource::Companies,
+            Resource::OperableCompanies,
             &words(&["cad-cli"]),
             &environment,
             &store,
@@ -1182,7 +1251,7 @@ async fn a_server_that_is_not_a_profiles_never_borrows_the_active_profiles_login
     ] {
         let values = tokio::task::block_in_place(|| {
             candidates(
-                Resource::Companies,
+                Resource::OperableCompanies,
                 &line,
                 &environment,
                 &store,
@@ -1227,7 +1296,7 @@ async fn a_fresh_cache_hit_reads_no_keyring_and_sends_nothing() {
     // The Key ID in the profile's metadata alone keys the entry.
     cache
         .write(
-            &CacheKey::session("companies", &format!("{}/", server.uri()), API_KEY),
+            &CacheKey::session("operable-companies", &format!("{}/", server.uri()), API_KEY),
             &[candidate("from-cache")],
             SystemTime::now(),
         )
@@ -1235,7 +1304,7 @@ async fn a_fresh_cache_hit_reads_no_keyring_and_sends_nothing() {
 
     let values = tokio::task::block_in_place(|| {
         candidates(
-            Resource::Companies,
+            Resource::OperableCompanies,
             &words(&["cad-cli"]),
             &environment,
             &store,
@@ -1260,7 +1329,7 @@ async fn offline_completion_never_reads_the_keyring() {
     let cache = Cache::from_environment(&environment).unwrap();
     cache
         .write(
-            &CacheKey::session("companies", &format!("{}/", server.uri()), API_KEY),
+            &CacheKey::session("operable-companies", &format!("{}/", server.uri()), API_KEY),
             &[candidate("stale")],
             hours_ago(48),
         )
@@ -1279,7 +1348,7 @@ async fn offline_completion_never_reads_the_keyring() {
         })
     };
 
-    assert_eq!(run(Resource::Companies), [candidate("stale")]);
+    assert_eq!(run(Resource::OperableCompanies), [candidate("stale")]);
     // Nothing cached for the second resource: no candidates, still no read.
     assert_eq!(run(Resource::ReportingPeriods), NO_CANDIDATES);
     assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 0);
@@ -1294,6 +1363,7 @@ async fn a_stale_entry_reads_the_keyring_once_to_go_live_and_is_refreshed() {
         .respond_with(ResponseTemplate::new(200).set_body_json(identity(COMPANY_ID)))
         .mount(&server)
         .await;
+    mount_roles(&server, &[]).await;
     Mock::given(method("GET"))
         .and(path(COMPANIES_PATH))
         .respond_with(
@@ -1312,7 +1382,7 @@ async fn a_stale_entry_reads_the_keyring_once_to_go_live_and_is_refreshed() {
     let cache = Cache::from_environment(&environment).unwrap();
     cache
         .write(
-            &CacheKey::session("companies", &format!("{}/", server.uri()), API_KEY),
+            &CacheKey::session("operable-companies", &format!("{}/", server.uri()), API_KEY),
             &[candidate("stale")],
             hours_ago(48),
         )
@@ -1320,7 +1390,7 @@ async fn a_stale_entry_reads_the_keyring_once_to_go_live_and_is_refreshed() {
 
     let values = tokio::task::block_in_place(|| {
         candidates(
-            Resource::Companies,
+            Resource::OperableCompanies,
             &words(&["cad-cli"]),
             &environment,
             &store,
@@ -1353,7 +1423,11 @@ async fn a_stored_login_with_another_key_id_than_the_metadata_does_not_go_live()
     let cache = Cache::from_environment(&environment).unwrap();
     cache
         .write(
-            &CacheKey::session("companies", &format!("{}/", server.uri()), other_key),
+            &CacheKey::session(
+                "operable-companies",
+                &format!("{}/", server.uri()),
+                other_key,
+            ),
             &[candidate("stale")],
             hours_ago(48),
         )
@@ -1361,7 +1435,7 @@ async fn a_stored_login_with_another_key_id_than_the_metadata_does_not_go_live()
 
     let values = tokio::task::block_in_place(|| {
         candidates(
-            Resource::Companies,
+            Resource::OperableCompanies,
             &words(&["cad-cli"]),
             &environment,
             &store,
@@ -1389,7 +1463,7 @@ async fn the_environments_key_id_keys_the_cache_whatever_the_profile_records() {
     let cache = Cache::from_environment(&environment).unwrap();
     cache
         .write(
-            &CacheKey::session("companies", &format!("{}/", server.uri()), API_KEY),
+            &CacheKey::session("operable-companies", &format!("{}/", server.uri()), API_KEY),
             &[candidate("from-env-key")],
             SystemTime::now(),
         )
@@ -1397,7 +1471,7 @@ async fn the_environments_key_id_keys_the_cache_whatever_the_profile_records() {
 
     let values = tokio::task::block_in_place(|| {
         candidates(
-            Resource::Companies,
+            Resource::OperableCompanies,
             &words(&["cad-cli"]),
             &environment,
             &store,
@@ -1430,7 +1504,7 @@ fn a_malformed_environment_key_means_no_candidates_not_the_profiles_login() {
 
     assert_eq!(
         candidates(
-            Resource::Companies,
+            Resource::OperableCompanies,
             &words(&["cad-cli"]),
             &environment,
             &empty_store(),

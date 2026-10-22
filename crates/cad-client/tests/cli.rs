@@ -17,6 +17,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 const COMPANY_ID: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0042);
 const IDENTITY_PATH: &str = "/api/auth/v2/machine/identity";
 const COMPANIES_PATH: &str = "/api/accounts/v1/companies";
+const USER_ROLES_PATH: &str = "/api/accounts/v1/user-roles";
 
 /// The configuration directory of every test that does not bring its own: a
 /// fresh, empty one, so a developer's stored logins cannot leak into a test
@@ -422,6 +423,12 @@ async fn completion_lists_company_ids_from_the_platform_on_stdout_only() {
                 "companyStatus": "ACTIVE"
             }])),
         )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(USER_ROLES_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
         .expect(1)
         .mount(&server)
         .await;
@@ -1158,6 +1165,18 @@ async fn platform_with_two_companies() -> MockServer {
             listed_company(ACME_ID, "Acme GmbH"),
             listed_company(OTHER_ID, "Other AG"),
         ])))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(USER_ROLES_PATH))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!([{
+                "id": Uuid::from_u128(1),
+                "userId": USER_ID,
+                "companyId": OTHER_ID,
+                "userRole": "EXPERT"
+            }])),
+        )
         .mount(&server)
         .await;
     Mock::given(method("GET"))

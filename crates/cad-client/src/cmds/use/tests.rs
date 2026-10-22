@@ -13,7 +13,7 @@ use clap::Parser;
 use secrecy::SecretString;
 use serde_json::{Value, json};
 use uuid::Uuid;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use super::Report;
@@ -37,6 +37,7 @@ const THIRD_COMPANY_ID: &str = "00000000-0000-0000-0000-0000000000ee";
 const FORBIDDEN_COMPANY_ID: &str = "00000000-0000-0000-0000-0000000000ff";
 const IDENTITY_PATH: &str = "/api/auth/v2/machine/identity";
 const COMPANIES_PATH: &str = "/api/accounts/v1/companies";
+const USER_ROLES_PATH: &str = "/api/accounts/v1/user-roles";
 const USER_PATH: &str = "/api/accounts/v1/users/00000000-0000-0000-0000-0000000000bb";
 const KEYRING_DOWN: &str = "no secret service is running";
 
@@ -276,6 +277,16 @@ fn company_json(id: &str, name: Option<&str>, status: &str) -> Value {
     })
 }
 
+/// A role the user holds, as the platform returns it.
+fn role_json(company_id: &str, role: &str) -> Value {
+    json!({
+        "id": Uuid::new_v4(),
+        "userId": USER_ID,
+        "companyId": company_id,
+        "userRole": role
+    })
+}
+
 /// The one company a platform lists unless a test says otherwise.
 fn acme() -> Value {
     company_json(COMPANY_ID, Some("Acme GmbH"), "ACTIVE")
@@ -285,7 +296,11 @@ fn acme() -> Value {
 /// `companies`. Its identity endpoint resolves the company named by the
 /// `X-CAD-Company-Id` header, or refuses it with a 403 when it is
 /// `FORBIDDEN_COMPANY_ID`; without the header it resolves `COMPANY_ID`.
-async fn platform_with(companies: Option<Vec<Value>>, email_known: Arc<AtomicBool>) -> MockServer {
+async fn platform_with(
+    companies: Option<Vec<Value>>,
+    roles: Vec<Value>,
+    email_known: Arc<AtomicBool>,
+) -> MockServer {
     let server = MockServer::start().await;
     let bearer = format!("Bearer {}", token());
     Mock::given(method("GET"))
@@ -328,6 +343,12 @@ async fn platform_with(companies: Option<Vec<Value>>, email_known: Arc<AtomicBoo
         })
         .mount(&server)
         .await;
+    Mock::given(method("GET"))
+        .and(path(USER_ROLES_PATH))
+        .and(query_param("userId_equals", USER_ID))
+        .respond_with(ResponseTemplate::new(200).set_body_json(roles))
+        .mount(&server)
+        .await;
     if let Some(companies) = companies {
         Mock::given(method("GET"))
             .and(path(COMPANIES_PATH))
@@ -364,9 +385,30 @@ async fn world_listing(companies: &[Value]) -> World {
     world_fixture(MemoryBackend::default(), Some(companies.to_vec())).await
 }
 
+/// A world whose platform lists `companies` and gives the user exactly `roles`.
+async fn world_with_roles(companies: &[Value], roles: Vec<Value>) -> World {
+    world_roles(MemoryBackend::default(), Some(companies.to_vec()), roles).await
+}
+
+/// A world where the user holds an `EXPERT` role in every company listed, so
+/// that each of them is one the login can act on.
 async fn world_fixture(keyring: MemoryBackend, companies: Option<Vec<Value>>) -> World {
+    let roles = companies
+        .iter()
+        .flatten()
+        .filter_map(|company| company["id"].as_str())
+        .map(|id| role_json(id, "EXPERT"))
+        .collect();
+    world_roles(keyring, companies, roles).await
+}
+
+async fn world_roles(
+    keyring: MemoryBackend,
+    companies: Option<Vec<Value>>,
+    roles: Vec<Value>,
+) -> World {
     let email_known = Arc::new(AtomicBool::new(true));
-    let server = platform_with(companies, Arc::clone(&email_known)).await;
+    let server = platform_with(companies, roles, Arc::clone(&email_known)).await;
     let dir = tempfile::tempdir().unwrap();
     let credentials_file = dir.path().join("cad-cli").join("credentials.json");
     let profiles_file = dir.path().join("cad-cli").join("profiles.json");
@@ -644,8 +686,8 @@ async fn a_new_profile_with_a_token_stores_the_login_the_email_and_the_active_pr
     assert!(!shown(&report).contains(SECRET));
     assert_eq!(
         world.requests().await,
-        3,
-        "the identity, the user and the companies"
+        4,
+        "the identity, the user, the companies and the roles"
     );
 }
 
@@ -2081,8 +2123,8 @@ async fn a_company_is_chosen_by_id_and_saved_on_the_profile() {
         company_of(&world, "local"),
         Some(chosen(OTHER_COMPANY_ID, Some("Other AG")))
     );
-    // The key, the companies, and access to the one chosen.
-    assert_eq!(world.requests().await, before + 3);
+    // The key, the companies, the roles, and access to the one chosen.
+    assert_eq!(world.requests().await, before + 4);
     let requests = world.server.received_requests().await.unwrap();
     let last = requests.last().unwrap();
     assert_eq!(last.url.path(), IDENTITY_PATH);
@@ -2096,7 +2138,7 @@ async fn a_company_is_chosen_by_id_and_saved_on_the_profile() {
         requests[before..requests.len() - 1]
             .iter()
             .all(|request| !request.headers.contains_key("X-CAD-Company-Id")),
-        "the key is checked and the companies are listed with no company selected"
+        "the key is checked and the companies and roles are read with no company selected"
     );
     // Active is untouched.
     assert_eq!(world.set().active(), Some(&name("local")));
@@ -2161,30 +2203,195 @@ async fn a_company_is_chosen_by_name_ignoring_case_and_spaces_and_the_old_one_is
 }
 
 #[tokio::test]
-async fn an_id_the_list_does_not_have_is_still_tried_and_has_no_name() {
+async fn an_id_the_list_does_not_have_is_refused_without_asking_the_platform_for_access() {
     let world = world_with_two_companies().await;
+    let before = world.set();
 
-    let report = world
+    let error = world
         .run(
             &["use", "company", THIRD_COMPANY_ID],
             &Scripted::default(),
             &Env::default(),
         )
         .await
-        .unwrap();
+        .unwrap_err();
 
-    assert_eq!(report.value["companyId"], THIRD_COMPANY_ID);
-    assert_eq!(report.value["companyName"], Value::Null);
+    assert!(matches!(error, CliError::Input(_)), "{error:?}");
     assert_eq!(
-        report.messages[0].1,
+        error.to_string(),
         format!(
-            "Using company {THIRD_COMPANY_ID} on local ({}) as {EMAIL}",
-            world.origin
+            "invalid input: your login cannot act on company {THIRD_COMPANY_ID}; it can act \
+             on:\n{COMPANY_ID} Acme GmbH\n{OTHER_COMPANY_ID} Other AG"
         )
     );
+    assert_eq!(world.set(), before, "nothing was saved");
+    assert_no_access_check(&world).await;
+}
+
+/// No request selected a company: the platform was never asked for access.
+async fn assert_no_access_check(world: &World) {
+    let requests = world.server.received_requests().await.unwrap();
+    assert!(
+        requests
+            .iter()
+            .all(|request| !request.headers.contains_key("X-CAD-Company-Id")),
+        "the platform was asked to check access"
+    );
+}
+
+#[tokio::test]
+async fn a_visible_company_without_a_role_is_refused_and_the_message_lists_the_operable_ones() {
+    // Acme is the user's own; Other AG is held through a role; Client AG is
+    // visible in the list, but the user has no role in it; the admin role
+    // grants nothing.
+    let client = company_json(THIRD_COMPANY_ID, Some("Client AG"), "ACTIVE");
+    let world = world_with_roles(
+        &[acme(), other_company(), client],
+        vec![
+            role_json(OTHER_COMPANY_ID, "READ_ONLY"),
+            role_json(THIRD_COMPANY_ID, "ADMIN"),
+        ],
+    )
+    .await;
+    login_local(&world).await;
+    let before = world.set();
+
+    for wanted in [THIRD_COMPANY_ID, "Client AG"] {
+        let error = world
+            .run(
+                &["use", "company", wanted],
+                &Scripted::default(),
+                &Env::default(),
+            )
+            .await
+            .unwrap_err();
+        let head = if wanted == THIRD_COMPANY_ID {
+            format!("your login cannot act on company {THIRD_COMPANY_ID}")
+        } else {
+            "no company your login can act on is named \"Client AG\"".to_owned()
+        };
+        assert!(matches!(error, CliError::Input(_)), "{error:?}");
+        assert_eq!(exit_code(&error), ExitCode::from(2));
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "invalid input: {head}; it can act on:\n{COMPANY_ID} Acme GmbH\n\
+                 {OTHER_COMPANY_ID} Other AG"
+            )
+        );
+    }
+    assert_eq!(world.set(), before, "nothing was saved");
+    assert_no_access_check(&world).await;
+
+    // A company a role grants is chosen, and the platform is asked then.
+    world
+        .run(
+            &["use", "company", "Other AG"],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
     assert_eq!(
         company_of(&world, "local"),
-        Some(chosen(THIRD_COMPANY_ID, None))
+        Some(chosen(OTHER_COMPANY_ID, Some("Other AG")))
+    );
+}
+
+#[tokio::test]
+async fn a_refusal_lists_twenty_companies_and_counts_the_rest() {
+    let companies: Vec<_> = (0..22_u128)
+        .map(|number| {
+            company_json(
+                &Uuid::from_u128(0x1000 + number).to_string(),
+                Some(&format!("Client {number:02}")),
+                "ACTIVE",
+            )
+        })
+        .collect();
+    let roles = companies
+        .iter()
+        .map(|company| role_json(company["id"].as_str().unwrap(), "EXPERT"))
+        .collect();
+    let world = world_with_roles(&companies, roles).await;
+    login_local(&world).await;
+
+    let error = world
+        .run(
+            &["use", "company", COMPANY_ID],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap_err();
+
+    let text = error.to_string();
+    assert!(text.starts_with(&format!(
+        "invalid input: your login cannot act on company {COMPANY_ID}; it can act on:\n"
+    )));
+    assert_eq!(text.lines().count(), 1 + 20 + 1, "{text}");
+    assert!(text.ends_with("\n… and 2 more"), "{text}");
+    assert!(text.contains("Client 19"), "{text}");
+    assert!(!text.contains("Client 20"), "{text}");
+}
+
+#[tokio::test]
+async fn the_login_step_sets_the_only_company_the_login_can_act_on() {
+    // A consultancy admin with no role in any client company: the list carries
+    // the clients, but only their own company is one they can act on.
+    let world = world_with_roles(
+        &[acme(), other_company(), acme_twin()],
+        vec![role_json(OTHER_COMPANY_ID, "ADMIN")],
+    )
+    .await;
+
+    let report = login_local(&world).await;
+
+    assert_eq!(
+        company_of(&world, "local"),
+        Some(chosen(COMPANY_ID, Some("Acme GmbH")))
+    );
+    assert!(
+        report
+            .messages
+            .iter()
+            .any(|(_, text)| text == "using company Acme GmbH for profile local"),
+        "{:?}",
+        report.messages
+    );
+}
+
+#[tokio::test]
+async fn at_a_terminal_the_menu_offers_only_the_companies_the_login_can_act_on() {
+    let world = world_with_roles(
+        &[acme(), other_company(), acme_twin()],
+        vec![role_json(OTHER_COMPANY_ID, "EXPERT")],
+    )
+    .await;
+    let terminal = Scripted {
+        stdin: token().into_bytes(),
+        ..Scripted::picking(&[1])
+    };
+
+    world
+        .profile(
+            "local",
+            &["--with-token", "--insecure-storage"],
+            &terminal,
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        terminal.menus(),
+        [(
+            "Company for profile local:".to_owned(),
+            vec![
+                format!("Acme GmbH ({COMPANY_ID})"),
+                format!("Other AG ({OTHER_COMPANY_ID})"),
+            ]
+        )]
     );
 }
 
@@ -2221,8 +2428,8 @@ async fn a_name_nobody_has_is_refused_and_a_deleted_company_has_no_name_to_match
         assert_eq!(
             error.to_string(),
             format!(
-                "invalid input: no accessible company is named \"{wanted}\"; list them with \
-                 `cad-cli company list`"
+                "invalid input: no company your login can act on is named \"{wanted}\"; it can \
+                 act on:\n{COMPANY_ID} Acme GmbH\n{THIRD_COMPANY_ID} ACME GMBH"
             )
         );
     }
@@ -2330,16 +2537,23 @@ async fn several_companies_with_the_name_are_listed_with_their_ids_and_nothing_i
     assert_eq!(
         error.to_string(),
         format!(
-            "invalid input: several accessible companies are named \"acme gmbh\"; use the ID of \
-             the one you mean:\n{COMPANY_ID} Acme GmbH\n{THIRD_COMPANY_ID} ACME GMBH"
+            "invalid input: several companies your login can act on are named \"acme gmbh\"; \
+             use the ID of the one you mean:\n{COMPANY_ID} Acme GmbH\n{THIRD_COMPANY_ID} ACME GMBH"
         )
     );
     assert_eq!(world.set(), before);
 }
 
 #[tokio::test]
-async fn a_company_the_key_cannot_act_on_saves_nothing_and_keeps_the_errors_exit_code() {
-    let world = world_with_two_companies().await;
+async fn a_company_the_platform_refuses_saves_nothing_and_keeps_the_errors_exit_code() {
+    // The roles grant it, so it is asked of the platform, which says no.
+    let world = world_listing(&[
+        acme(),
+        other_company(),
+        company_json(FORBIDDEN_COMPANY_ID, Some("Forbidden SE"), "ACTIVE"),
+    ])
+    .await;
+    login_local(&world).await;
     world
         .run(
             &["use", "company", OTHER_COMPANY_ID],

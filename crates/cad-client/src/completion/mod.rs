@@ -156,9 +156,9 @@ impl EnvCompleter for AutoloadableZsh {
     }
 }
 
-/// Completes a company ID with the companies the API key can access.
+/// Completes a company ID with the companies the login can act on.
 pub(crate) fn company_ids() -> ArgValueCompleter {
-    ArgValueCompleter::new(|current: &OsStr| complete(Resource::Companies, current))
+    ArgValueCompleter::new(|current: &OsStr| complete(Resource::OperableCompanies, current))
 }
 
 /// Completes a profile name with the profiles in the profiles file. It makes
@@ -189,8 +189,9 @@ pub(crate) fn reporting_period_ids() -> ArgValueCompleter {
 /// A platform list that can supply completion candidates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Resource {
-    /// Session-level: the same for every company of one API key.
-    Companies,
+    /// Session-level: the same for every company of one API key. Only the
+    /// companies the login can act on, not every company it can see.
+    OperableCompanies,
     /// Company-scoped: depends on `--company-id` or `CAD_COMPANY_ID`.
     ReportingPeriods,
 }
@@ -198,7 +199,7 @@ pub(crate) enum Resource {
 impl Resource {
     const fn name(self) -> &'static str {
         match self {
-            Self::Companies => "companies",
+            Self::OperableCompanies => "operable-companies",
             Self::ReportingPeriods => "reporting-periods",
         }
     }
@@ -261,7 +262,7 @@ pub(crate) fn candidates(
     // Reporting periods belong to the selected company; without one there is
     // nothing to offer, as there is no command to complete them for.
     let company = match resource {
-        Resource::Companies => None,
+        Resource::OperableCompanies => None,
         Resource::ReportingPeriods => {
             match select_company(&global, environment, &profiles, &selection) {
                 Ok(Some(company)) => Some(company),
