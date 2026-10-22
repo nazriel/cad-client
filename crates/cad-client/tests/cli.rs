@@ -384,6 +384,18 @@ fn completion_without_credentials_still_completes_commands_quietly() {
         .args(["--", "cad-cli", "--company-id", ""])
         .assert()
         .success()
+        // No IDs without credentials; `-`, which picks one, needs none.
+        .stdout("-:Select interactively")
+        .stderr(predicate::str::is_empty());
+
+    cad_cli()
+        .env("COMPLETE", "zsh")
+        .env("XDG_CACHE_HOME", cache.path())
+        .env("_CLAP_COMPLETE_INDEX", "2")
+        .env("RUST_LOG", "debug")
+        .args(["--", "cad-cli", "--company-id", "0"])
+        .assert()
+        .success()
         .stdout(predicate::str::is_empty())
         .stderr(predicate::str::is_empty());
 
@@ -458,7 +470,7 @@ async fn completion_lists_company_ids_from_the_platform_on_stdout_only() {
         run(completion(cache.path()))
             .await
             .success()
-            .stdout(format!("{COMPANY_ID}:Acme"))
+            .stdout(format!("-:Select interactively\n{COMPANY_ID}:Acme"))
             .stderr(predicate::str::is_empty());
     }
 }
@@ -744,6 +756,45 @@ async fn a_failing_users_request_still_logs_in_with_no_email() {
         serde_json::Value::Null
     );
     assert!(credentials_file(home.path()).exists());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_dash_without_a_terminal_names_what_to_pass_and_makes_no_request() {
+    let server = MockServer::start().await;
+    Mock::given(wiremock::matchers::any())
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&server)
+        .await;
+    let home = tempfile::tempdir().unwrap();
+    write_profiles(home.path(), "local", &[("local", &server.uri(), true)]);
+
+    for (arguments, message) in [
+        (
+            vec!["use", "profile", "-"],
+            "`-` picks a profile at a terminal, and there is none; name the profile",
+        ),
+        (
+            vec!["use", "company", "-"],
+            "`-` picks a company at a terminal, and there is none; pass its ID or name",
+        ),
+        (
+            vec!["--company-id", "-", "reporting-period", "list"],
+            "`-` picks a company at a terminal, and there is none; pass --company-id <ID> or set CAD_COMPANY_ID",
+        ),
+    ] {
+        let mut command = cad_cli_in(home.path());
+        command
+            .env("CAD_API_KEY", KEY_ID)
+            .env("CAD_API_SECRET", SECRET);
+        command.args(&arguments);
+        run(command)
+            .await
+            .code(2)
+            .stdout(predicate::str::is_empty())
+            .stderr(predicate::str::contains(message));
+    }
+    assert_eq!(stored_profiles(home.path())["active"], "local");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

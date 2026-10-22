@@ -13,13 +13,15 @@ use clap::{ArgMatches, FromArgMatches};
 use self::context::CommandContext;
 use self::platform::Platform;
 use crate::cli::args::LocalInputPath;
-use crate::cli::{Cli, OutputFormat, command_with_help_header};
+use crate::cli::{Cli, CompanyArg, OutputFormat, command_with_help_header};
 use crate::cmds::Invocation;
-use crate::config::{AppConfig, Environment, ProcessEnvironment};
+use crate::config::{AppConfig, Environment, ProcessEnvironment, picking_without_company};
 use crate::error::CliError;
 use crate::exec::update::notice::{self, BackgroundCheck};
 use crate::support::credentials::CredentialStore;
-use crate::support::profiles::ProfileStore;
+use crate::support::operable::operable_companies;
+use crate::support::pick::{self, Picking};
+use crate::support::profiles::{ProfileSet, ProfileStore};
 use crate::support::terminal::{ProcessTerminal, StatusKind, Terminal};
 
 /// Parses the supplied process arguments and executes the application.
@@ -131,16 +133,34 @@ async fn execute(
         Invocation::Online(online) => online,
     };
 
-    let config = AppConfig::resolve(&cli.global, environment, store, &profiles.load()?)?;
+    let set = profiles.load()?;
+    let picking = cli.global.company_id == Some(CompanyArg::Pick);
+    if picking {
+        // `--company-id -` is for a command that acts on a company, and for a
+        // person who can answer the list.
+        if !online.needs_company() {
+            return Err(picking_without_company());
+        }
+        pick::require_terminal(terminal, Picking::CompanyFlag)?;
+    }
+    let config = if picking {
+        AppConfig::resolve_unscoped(&cli.global, environment, store, &set)?
+    } else {
+        AppConfig::resolve(&cli.global, environment, store, &set)?
+    };
     // Refused before any request: the platform's own choice of company for
     // the key is never used.
-    if online.needs_company() {
+    if online.needs_company() && !picking {
         config.require_company()?;
     }
     // Local preconditions are checked before the identity request so a typo
     // in a path does not cost a network round-trip to fail on.
     check_local_inputs(matches)?;
-    let platform = Platform::connect(config).await?;
+    let platform = if picking {
+        connect_picking(config, &set, &command_context).await?
+    } else {
+        Platform::connect(config).await?
+    };
 
     let result = online.run(&command_context, &platform).await?;
 
@@ -150,6 +170,45 @@ async fn execute(
     let (kind, summary) = completion_summary(&result);
     terminal.status(kind, &summary)?;
     Ok(0)
+}
+
+/// Connects without a company, asks which of the companies the login can act
+/// on to use for this one command, and scopes the session to it. Nothing is
+/// saved.
+async fn connect_picking(
+    config: AppConfig,
+    profiles: &ProfileSet,
+    context: &CommandContext<'_>,
+) -> Result<Platform, CliError> {
+    let current = config
+        .profile()
+        .and_then(|name| profiles.get(name))
+        .and_then(|profile| profile.company.as_ref())
+        .map(|company| company.id);
+    let platform = context
+        .during(
+            "checking the API key with the server",
+            Platform::connect(config),
+        )
+        .await?;
+    let operable = context
+        .during(
+            "listing the companies",
+            operable_companies(platform.connected()),
+        )
+        .await?;
+    if operable.is_empty() {
+        return Err(CliError::Input(
+            "your login cannot pick a company; it can act on no company".to_owned(),
+        ));
+    }
+    let company = pick::company(context.terminal(), &operable, current)?;
+    context
+        .during(
+            "checking access to the company",
+            platform.for_company(company.id),
+        )
+        .await
 }
 
 /// Short confirmation written to stderr once the data has been emitted.

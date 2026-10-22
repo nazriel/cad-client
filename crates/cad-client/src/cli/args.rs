@@ -25,8 +25,9 @@ pub struct GlobalArgs {
     pub server_url: Option<String>,
 
     /// Accessible company to act on, instead of the profile's (see `cad-cli use company`).
-    #[arg(long, global = true, add = crate::completion::company_ids())]
-    pub company_id: Option<CompanyId>,
+    /// `-` picks one from a list at a terminal, for this command only.
+    #[arg(long, global = true, value_name = "ID|-", add = crate::completion::company_ids())]
+    pub company_id: Option<CompanyArg>,
 
     /// Permit HTTP for localhost/loopback mock servers.
     #[arg(long, global = true)]
@@ -45,6 +46,28 @@ pub struct GlobalArgs {
     #[arg(long, global = true)]
     pub yes: bool,
 }
+
+/// The value of `--company-id`: a company's ID, or `-` to pick one from a list
+/// at a terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompanyArg {
+    Id(CompanyId),
+    Pick,
+}
+
+impl FromStr for CompanyArg {
+    type Err = uuid::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if value == PICK {
+            return Ok(Self::Pick);
+        }
+        value.parse().map(Self::Id)
+    }
+}
+
+/// What stands for "pick from a list" where a value is expected.
+pub(crate) const PICK: &str = "-";
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
 pub enum OutputFormat {

@@ -385,6 +385,63 @@ fn completers_are_attached_to_the_company_and_reporting_period_ids() {
     assert!(has_completer(use_company, "company"));
 }
 
+/// What the engine offers for the last of `line`, as the shell would ask.
+fn offered(line: &[&str]) -> Vec<(String, Option<String>)> {
+    let args: Vec<OsString> = line.iter().map(OsString::from).collect();
+    let index = args.len() - 1;
+    clap_complete::engine::complete(&mut Cli::command(), args, index, None)
+        .unwrap()
+        .into_iter()
+        .map(|candidate| {
+            (
+                candidate.get_value().to_string_lossy().into_owned(),
+                candidate.get_help().map(ToString::to_string),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_dash_is_offered_to_pick_a_profile_or_a_company_interactively() {
+    let dash = ("-".to_owned(), Some("Select interactively".to_owned()));
+    for line in [
+        ["cad-cli", "use", "profile", ""].as_slice(),
+        ["cad-cli", "use", "profile", "-"].as_slice(),
+        ["cad-cli", "use", "company", ""].as_slice(),
+        ["cad-cli", "use", "company", "-"].as_slice(),
+        ["cad-cli", "--company-id", ""].as_slice(),
+        ["cad-cli", "--company-id", "-"].as_slice(),
+        ["cad-cli", "reporting-period", "list", "--company-id", "-"].as_slice(),
+    ] {
+        assert!(
+            offered(line).contains(&dash),
+            "{line:?}: {:?}",
+            offered(line)
+        );
+    }
+}
+
+#[test]
+fn a_dash_is_not_offered_where_it_picks_nothing() {
+    // A word that is not a prefix of `-` is no request for it.
+    for line in [
+        ["cad-cli", "use", "profile", "s"].as_slice(),
+        ["cad-cli", "use", "company", "0"].as_slice(),
+        ["cad-cli", "--company-id", "0"].as_slice(),
+        // `--profile` names a profile; it has nothing to pick from a list.
+        ["cad-cli", "--profile", ""].as_slice(),
+        ["cad-cli", "--profile", "-"].as_slice(),
+        // A report's reporting period is an ID, picked by none of these.
+        ["cad-cli", "reporting-period", "get", ""].as_slice(),
+    ] {
+        assert!(
+            offered(line).iter().all(|(value, _)| value != "-"),
+            "{line:?}: {:?}",
+            offered(line)
+        );
+    }
+}
+
 #[test]
 fn registration_matches_the_complete_env_protocol_for_every_shell() {
     for shell in [

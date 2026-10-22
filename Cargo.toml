@@ -32,8 +32,9 @@ futures-util = "0.3.31"
 humantime = "2.4.0"
 indicatif = "0.18.6"
 # Prompts for `cad-cli` only. The `console` backend reuses the `console` crate
-# above instead of adding crossterm.
-inquire = { version = "0.9.4", default-features = false, features = ["console"] }
+# above instead of adding crossterm; `fuzzy` filters the `-` pickers as you
+# type (fuzzy-matcher, about 11 KB of release binary).
+inquire = { version = "0.9.4", default-features = false, features = ["console", "fuzzy"] }
 keyring-core = "1"
 predicates = "3.1.4"
 reqwest = { version = "0.12.23", default-features = false, features = ["json", "rustls-tls", "stream"] }

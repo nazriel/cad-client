@@ -4,7 +4,7 @@ use cad_api::{ApiKeyV2Credentials, ServerConfig, ids::CompanyId};
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::cli::GlobalArgs;
+use crate::cli::{CompanyArg, GlobalArgs};
 use crate::error::CliError;
 use crate::support::credentials::{self, CredentialStore, Resolved, Source as CredentialSource};
 use crate::support::profiles::{ProfileName, ProfileSet};
@@ -138,6 +138,23 @@ impl AppConfig {
         Self::resolve_with(selection, resolved, company)
     }
 
+    /// Like [`Self::resolve`], with no company: for a command that picks one
+    /// once connected, because `--company-id` is `-`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::resolve`], except for the company.
+    pub(crate) fn resolve_unscoped(
+        args: &GlobalArgs,
+        environment: &impl Environment,
+        store: &CredentialStore,
+        profiles: &ProfileSet,
+    ) -> Result<Self, CliError> {
+        let selection = select(args, environment, profiles)?;
+        let resolved = resolve_credentials(environment, store, &selection)?;
+        Self::resolve_with(selection, resolved, None)
+    }
+
     /// Like [`Self::resolve`], for a caller that has already made the
     /// selection and found the credentials and the company, and must not read
     /// the store a second time.
@@ -210,6 +227,11 @@ impl fmt::Debug for AppConfig {
             .field("company", &self.company)
             .finish()
     }
+}
+
+/// The error for `--company-id -` on a command that acts on no company.
+pub(crate) fn picking_without_company() -> CliError {
+    CliError::Input("--company-id - picks a company, and this command acts on none".to_owned())
 }
 
 /// The error for a command that acts on a company when none is selected.
@@ -430,9 +452,13 @@ pub(crate) fn build_server(raw: &str, allow_http: bool) -> Result<ServerConfig, 
 /// The profile in use is the one [`select`] chose, so it is never a profile
 /// whose server is not the one talked to.
 ///
+/// `--company-id -` selects none here: the command picks its company once it
+/// is connected, or is refused before.
+///
 /// # Errors
 ///
-/// Returns [`CliError`] when `CAD_COMPANY_ID` is not a UUID.
+/// Returns [`CliError`] when `CAD_COMPANY_ID` is not a UUID, or when
+/// `--company-id` is `-`.
 pub(crate) fn select_company(
     args: &GlobalArgs,
     environment: &impl Environment,
@@ -443,8 +469,11 @@ pub(crate) fn select_company(
         .profile_name()
         .and_then(|name| profiles.get(name))
         .and_then(|profile| profile.company.as_ref());
-    let (id, source) = if let Some(id) = args.company_id {
-        (id, CompanySource::Flag)
+    let (id, source) = if let Some(flag) = args.company_id {
+        match flag {
+            CompanyArg::Id(id) => (id, CompanySource::Flag),
+            CompanyArg::Pick => return Err(picking_without_company()),
+        }
     } else if let Some(raw) = environment.get("CAD_COMPANY_ID") {
         let id = raw
             .parse::<Uuid>()
@@ -1060,6 +1089,44 @@ mod tests {
                 .to_string()
                 .starts_with("configuration error: CAD_COMPANY_ID is not a UUID"),
             "{error}"
+        );
+    }
+
+    #[test]
+    fn a_dash_is_a_choice_for_the_flag_and_not_a_company_for_the_variable() {
+        use crate::cli::CompanyArg;
+
+        let id = "00000000-0000-0000-0000-000000000001";
+        assert_eq!(
+            parse(&["--company-id", "-"]).global.company_id,
+            Some(CompanyArg::Pick)
+        );
+        assert_eq!(
+            parse(&["--company-id", id]).global.company_id,
+            Some(CompanyArg::Id(id.parse().unwrap()))
+        );
+
+        let set = profiles(&[]);
+        let selection = pick(&[], &Env::default(), &set).unwrap();
+        let environment = credentials().with("CAD_COMPANY_ID", "-");
+        let error = select_company(&parse(&[]).global, &environment, &set, &selection).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .starts_with("configuration error: CAD_COMPANY_ID is not a UUID"),
+            "{error}"
+        );
+        // The flag is a choice the command makes once connected, never a company.
+        let error = select_company(
+            &parse(&["--company-id", "-"]).global,
+            &credentials(),
+            &set,
+            &selection,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "invalid input: --company-id - picks a company, and this command acts on none"
         );
     }
 

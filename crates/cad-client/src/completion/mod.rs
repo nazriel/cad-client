@@ -38,6 +38,7 @@ use clap_complete::{CompleteEnv, Shell};
 use uuid::Uuid;
 
 use self::cache::{Cache, CacheKey, Candidate, Network};
+use crate::cli::args::PICK;
 use crate::cli::{Cli, GlobalArgs};
 use crate::config::{
     AppConfig, Environment, ProcessEnvironment, Selection, resolve_credentials, select,
@@ -156,29 +157,56 @@ impl EnvCompleter for AutoloadableZsh {
     }
 }
 
-/// Completes a company ID with the companies the login can act on.
+/// Completes a company ID with the companies the login can act on, and `-`,
+/// which picks one from a list.
 pub(crate) fn company_ids() -> ArgValueCompleter {
-    ArgValueCompleter::new(|current: &OsStr| complete(Resource::OperableCompanies, current))
+    ArgValueCompleter::new(|current: &OsStr| {
+        let mut candidates = interactive(current);
+        candidates.extend(complete(Resource::OperableCompanies, current));
+        candidates
+    })
 }
 
 /// Completes a profile name with the profiles in the profiles file. It makes
 /// no request and reads no credentials.
 pub(crate) fn profile_names() -> ArgValueCompleter {
+    ArgValueCompleter::new(|current: &OsStr| profiles_named(current))
+}
+
+/// Completes the profile of `use profile` with `-`, which picks one from a
+/// list, and the profile names.
+pub(crate) fn profile_choices() -> ArgValueCompleter {
     ArgValueCompleter::new(|current: &OsStr| {
-        let Some(current) = current.to_str() else {
-            return Vec::new();
-        };
-        let profiles = ProfileStore::from_environment(&ProcessEnvironment)
-            .load()
-            .unwrap_or_default();
-        profiles
-            .iter()
-            .filter(|(name, _)| name.as_str().starts_with(current))
-            .map(|(name, profile)| {
-                CompletionCandidate::new(name.as_str()).help(Some(profile.url.clone().into()))
-            })
-            .collect()
+        let mut candidates = interactive(current);
+        candidates.extend(profiles_named(current));
+        candidates
     })
+}
+
+/// `-`, when the word being completed is a prefix of it.
+fn interactive(current: &OsStr) -> Vec<CompletionCandidate> {
+    match current.to_str() {
+        Some(current) if PICK.starts_with(current) => {
+            vec![CompletionCandidate::new(PICK).help(Some("Select interactively".into()))]
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn profiles_named(current: &OsStr) -> Vec<CompletionCandidate> {
+    let Some(current) = current.to_str() else {
+        return Vec::new();
+    };
+    let profiles = ProfileStore::from_environment(&ProcessEnvironment)
+        .load()
+        .unwrap_or_default();
+    profiles
+        .iter()
+        .filter(|(name, _)| name.as_str().starts_with(current))
+        .map(|(name, profile)| {
+            CompletionCandidate::new(name.as_str()).help(Some(profile.url.clone().into()))
+        })
+        .collect()
 }
 
 /// Completes a reporting-period ID with the periods of the selected company.

@@ -13,7 +13,7 @@ use std::io::IsTerminal;
 
 use clap::{Command, CommandFactory, Parser};
 
-pub use args::{GlobalArgs, OutputFormat};
+pub use args::{CompanyArg, GlobalArgs, OutputFormat};
 
 use help::{Example, Variable};
 
@@ -83,6 +83,10 @@ const EXAMPLES: &[Example] = &[
     Example::new(
         "cad-cli --company-id 00000000-0000-0000-0000-000000000001 reporting-period list",
         "Run a command for another accessible company",
+    ),
+    Example::new(
+        "cad-cli --company-id - reporting-period list",
+        "Pick the company from a list at a terminal for this one command; nothing is saved",
     ),
 ];
 

@@ -1,5 +1,7 @@
 //! `cad-cli use profile <name>`.
 
+use std::str::FromStr;
+
 use cad_api::ServerConfig;
 use serde::Serialize;
 use strum::EnumString;
@@ -8,12 +10,33 @@ use super::login::{self, Options};
 use super::{ProfileArgs, ProfileRow, Report, company, forget, list, no_company};
 use crate::app::context::CommandContext;
 use crate::cli::GlobalArgs;
+use crate::cli::args::PICK;
 use crate::config::{Environment, build_server, origin_of_raw, select_profile};
 use crate::error::CliError;
 use crate::output::to_value;
 use crate::support::credentials::{CredentialStore, origin_of};
-use crate::support::profiles::{Profile, ProfileName, ProfileStore};
+use crate::support::pick::{self, Picking};
+use crate::support::profiles::{Profile, ProfileName, ProfileSet, ProfileStore};
 use crate::support::terminal::{StatusKind, Terminal};
+
+/// The argument of `cad-cli use profile`: the name of a profile, or `-` to
+/// pick one from the profiles there are.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ProfileChoice {
+    Named(ProfileName),
+    Pick,
+}
+
+impl FromStr for ProfileChoice {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if value == PICK {
+            return Ok(Self::Pick);
+        }
+        value.parse().map(Self::Named)
+    }
+}
 
 /// The profile names that suggest a server when the profile is created. It is
 /// a convenience of the prompt, not a built-in deployment: any other name gets
@@ -69,14 +92,17 @@ pub(super) async fn run(
             "--server-url does not apply to `cad-cli use profile`; use --url".to_owned(),
         ));
     }
-    if args.forget {
-        return forget::run(args.name, environment, store, profiles);
-    }
-
     let terminal = context.terminal();
     let mut set = profiles.load()?;
+    let name = match &args.name {
+        ProfileChoice::Named(name) => name.clone(),
+        ProfileChoice::Pick => pick_profile(&args, terminal, &set)?,
+    };
+    if args.forget {
+        return forget::run(name, environment, store, profiles);
+    }
+
     let previous = set.active().cloned();
-    let name = args.name.clone();
 
     let mut profile = match set.get(&name) {
         Some(existing) => existing_profile(existing.clone(), &name, &args, global)?,
@@ -146,6 +172,41 @@ pub(super) async fn run(
         previous,
     })?;
     Ok(Report { value, messages })
+}
+
+/// Asks which of the profiles to use, for `-`: `<name>  <url>  <account>` each,
+/// by name, with the cursor on the active profile.
+fn pick_profile(
+    args: &ProfileArgs,
+    terminal: &dyn Terminal,
+    set: &ProfileSet,
+) -> Result<ProfileName, CliError> {
+    if args.url.is_some() {
+        return Err(CliError::Input(
+            "--url needs a profile name, not -".to_owned(),
+        ));
+    }
+    pick::require_terminal(terminal, Picking::Profile)?;
+    let rows = list::rows(set, None);
+    if rows.is_empty() {
+        return Err(CliError::Input(
+            "there is no profile to pick; create one with `cad-cli use profile <name>`".to_owned(),
+        ));
+    }
+    let options: Vec<_> = rows
+        .iter()
+        .map(|row| {
+            format!(
+                "{}  {}  {}",
+                row.name,
+                row.url,
+                row.account().unwrap_or_else(|| "no login".to_owned())
+            )
+        })
+        .collect();
+    let start = rows.iter().position(|row| row.active).unwrap_or(0);
+    let index = terminal.select("Profile:", &options, start)?;
+    Ok(rows[index].name.clone())
 }
 
 /// The lines that say which profile is in use now, and whether `CAD_PROFILE`

@@ -26,6 +26,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use self::company::CompanyChoice;
+use self::profile::ProfileChoice;
 use crate::app::context::CommandContext;
 use crate::cli::GlobalArgs;
 use crate::cli::help::{self, Example};
@@ -57,6 +58,10 @@ const COMPANY_EXAMPLES: &[Example] = &[
         "Act on a company by its ID",
     ),
     Example::new(
+        "cad-cli use company -",
+        "Pick the company from a list at a terminal, typing to filter it",
+    ),
+    Example::new(
         "cad-cli --profile staging use company \"Acme GmbH\"",
         "Choose the company of another profile, leaving the active profile as it is",
     ),
@@ -66,6 +71,10 @@ const PROFILE_EXAMPLES: &[Example] = &[
     Example::new(
         "cad-cli use profile production",
         "Switch to a profile; a new one asks for its server and offers to log in",
+    ),
+    Example::new(
+        "cad-cli use profile -",
+        "Pick one of the profiles from a list at a terminal, typing to filter it",
     ),
     Example::new(
         "cad-cli use profile staging --login",
@@ -128,6 +137,11 @@ pub(crate) enum Command {
     /// instead; `--insecure-storage` answers yes in advance.
     ///
     /// `CAD_API_KEY` and `CAD_API_SECRET` take precedence over a stored login.
+    ///
+    /// `-` instead of a name picks one of the profiles there are from a list at
+    /// a terminal: type to filter it, Enter to choose, Esc to cancel. The one
+    /// chosen is then used as if it had been named. `-` cannot be combined with
+    /// `--url`.
     #[command(after_help = help::examples(PROFILE_EXAMPLES))]
     Profile(ProfileArgs),
     /// Choose the company the profile in use acts on.
@@ -143,6 +157,10 @@ pub(crate) enum Command {
     /// `--company-id` or `CAD_COMPANY_ID` names another. Without any, they
     /// refuse to run. This changes the profile for every shell; use
     /// `--company-id` for a single command.
+    ///
+    /// `-` instead of a company picks one of the companies the login can act on
+    /// from a list at a terminal: type to filter it, Enter to choose, Esc to
+    /// cancel. The one chosen is then checked and saved as if it had been named.
     #[command(after_help = help::examples(COMPANY_EXAMPLES))]
     Company(CompanyArgs),
 }
@@ -150,8 +168,8 @@ pub(crate) enum Command {
 /// Arguments of `cad-cli use company`.
 #[derive(Debug, Args)]
 pub(crate) struct CompanyArgs {
-    /// Name or ID of the company.
-    #[arg(value_name = "COMPANY", add = crate::completion::company_ids())]
+    /// Name or ID of the company, or `-` to pick one from a list at a terminal.
+    #[arg(value_name = "COMPANY|-", add = crate::completion::company_ids())]
     pub(crate) company: CompanyChoice,
 }
 
@@ -160,9 +178,10 @@ pub(crate) struct CompanyArgs {
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Args)]
 pub(crate) struct ProfileArgs {
-    /// Name of the profile: 1 to 32 characters of a-z, 0-9, - and _.
-    #[arg(add = crate::completion::profile_names())]
-    pub(crate) name: ProfileName,
+    /// Name of the profile: 1 to 32 characters of a-z, 0-9, - and _. `-`
+    /// picks one of the profiles there are, from a list at a terminal.
+    #[arg(value_name = "NAME|-", add = crate::completion::profile_choices())]
+    pub(crate) name: ProfileChoice,
 
     /// Address of the profile's server, for a profile that does not exist yet.
     #[arg(long, value_hint = clap::ValueHint::Url)]

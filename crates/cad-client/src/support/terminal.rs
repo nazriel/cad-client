@@ -50,6 +50,9 @@ pub(crate) trait Progress: Send {}
 /// the person before they type again.
 pub(crate) type Validator = fn(&str) -> Result<(), String>;
 
+/// How many options a list shows at once.
+const SELECT_PAGE_SIZE: usize = 10;
+
 /// Process I/O used by command handlers.
 pub(crate) trait Terminal: Send + Sync {
     /// Writes a user-facing status message to stderr.
@@ -91,13 +94,13 @@ pub(crate) trait Terminal: Send + Sync {
     /// [`Terminal::confirm`], `--yes` does not answer it.
     fn ask(&self, question: &str) -> Result<bool, CliError>;
 
-    /// Asks the person to pick one of `options` and returns its index. The
-    /// list can be filtered by typing.
+    /// Asks the person to pick one of `options` and returns its index, with
+    /// the cursor on `start`. Typing filters the list, fuzzily.
     ///
     /// # Errors
     ///
     /// [`CliError::Cancelled`] when the person gives up with Esc or Ctrl-C.
-    fn select(&self, label: &str, options: &[String]) -> Result<usize, CliError>;
+    fn select(&self, label: &str, options: &[String], start: usize) -> Result<usize, CliError>;
 
     /// Opens `url` in the user's browser. Returns whether a browser was
     /// started: on a machine with no display there is none to start.
@@ -208,8 +211,10 @@ impl Terminal for ProcessTerminal {
             .map_err(prompt_error)
     }
 
-    fn select(&self, label: &str, options: &[String]) -> Result<usize, CliError> {
+    fn select(&self, label: &str, options: &[String], start: usize) -> Result<usize, CliError> {
         inquire::Select::new(label, options.to_vec())
+            .with_page_size(SELECT_PAGE_SIZE)
+            .with_starting_cursor(start)
             .raw_prompt()
             .map(|chosen| chosen.index)
             .map_err(prompt_error)
@@ -390,7 +395,7 @@ impl Terminal for SilentTerminal {
         Ok(false)
     }
 
-    fn select(&self, _label: &str, _options: &[String]) -> Result<usize, CliError> {
+    fn select(&self, _label: &str, _options: &[String], _start: usize) -> Result<usize, CliError> {
         Err(CliError::Input("no terminal to ask on".to_owned()))
     }
 

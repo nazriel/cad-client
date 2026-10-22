@@ -1,3 +1,4 @@
+use cad_api::ids::CompanyId;
 use cad_api::{Client, CompanyScoped, Connected};
 
 use crate::adapters::sdk::SdkAdapter;
@@ -58,6 +59,16 @@ impl Platform {
             }
             None => Ok(Self::new(client.connect(credentials).await?, None, profile)),
         }
+    }
+
+    /// Scopes the session to `company`, which was chosen after connecting.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CliError`] if the company is refused.
+    pub(crate) async fn for_company(self, company: CompanyId) -> Result<Self, CliError> {
+        let scoped = self.connected.for_company(company).await?;
+        Ok(Self::new(self.connected, Some(scoped), self.profile))
     }
 
     pub(crate) const fn connected(&self) -> &Client<Connected> {

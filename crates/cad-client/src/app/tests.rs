@@ -5,7 +5,7 @@
 //! These stay beside the code because they drive the private `execute()` seam
 //! with fakes. Black-box coverage of the shipped binary lives in `tests/cli.rs`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::Write;
 use std::sync::Mutex;
 
@@ -60,6 +60,10 @@ struct FakeTerminal {
     progress: Mutex<Vec<String>>,
     confirmations: Mutex<Vec<String>>,
     interactive: bool,
+    /// The indexes a person picks in `select`, in order.
+    picks: Mutex<VecDeque<usize>>,
+    /// What `select` showed: the label, the options, and where the cursor was.
+    menus: Mutex<Vec<(String, Vec<String>, usize)>>,
 }
 
 impl FakeTerminal {
@@ -77,6 +81,19 @@ impl FakeTerminal {
             .lock()
             .expect("confirmation lock")
             .clone()
+    }
+
+    /// A terminal whose person picks `indexes` from the lists, in order.
+    fn picking(indexes: &[usize]) -> Self {
+        Self {
+            interactive: true,
+            picks: Mutex::new(indexes.iter().copied().collect()),
+            ..Self::default()
+        }
+    }
+
+    fn menus(&self) -> Vec<(String, Vec<String>, usize)> {
+        self.menus.lock().expect("menus lock").clone()
     }
 }
 
@@ -142,10 +159,16 @@ impl Terminal for FakeTerminal {
         ))
     }
 
-    fn select(&self, _label: &str, _options: &[String]) -> Result<usize, CliError> {
-        Err(CliError::Input(
-            "this fake terminal answers no prompts".to_owned(),
-        ))
+    fn select(&self, label: &str, options: &[String], start: usize) -> Result<usize, CliError> {
+        self.menus
+            .lock()
+            .expect("menus lock")
+            .push((label.to_owned(), options.to_vec(), start));
+        self.picks
+            .lock()
+            .expect("picks lock")
+            .pop_front()
+            .ok_or_else(|| CliError::Input("this fake terminal answers no prompts".to_owned()))
     }
 
     fn ask(&self, _question: &str) -> Result<bool, CliError> {
@@ -1929,4 +1952,243 @@ async fn a_profile_not_in_the_file_fails_naming_the_command_that_creates_it() {
         error.to_string(),
         "configuration error: there is no profile nope; create it with `cad-cli use profile nope`"
     );
+}
+
+const OTHER_COMPANY_ID: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0077);
+const USER_ROLES_PATH: &str = "/api/accounts/v1/user-roles";
+
+/// A platform where the key's user has a company of their own, `COMPANY_ID`,
+/// and an expert role in `OTHER_COMPANY_ID`, and lists no reporting periods.
+async fn two_company_server() -> MockServer {
+    let company = |id: Uuid, name: &str| {
+        serde_json::json!({
+            "id": id,
+            "name": name,
+            "displayName": name,
+            "createdAt": "2026-01-01T00:00:00Z",
+            "isConsultingCompany": false,
+            "isDemoCompany": false,
+            "availableClientCompanies": null,
+            "companyStatus": "ACTIVE"
+        })
+    };
+    let server = company_selecting_server().await;
+    Mock::given(method("GET"))
+        .and(path(COMPANIES_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            company(OTHER_COMPANY_ID, "Other AG"),
+            company(COMPANY_ID, "Acme GmbH"),
+        ])))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(USER_ROLES_PATH))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!([{
+                "id": Uuid::from_u128(1),
+                "userId": Uuid::nil(),
+                "companyId": OTHER_COMPANY_ID,
+                "userRole": "EXPERT"
+            }])),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(REPORTING_PERIODS_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .mount(&server)
+        .await;
+    server
+}
+
+fn company_header(request: &wiremock::Request) -> Option<String> {
+    request
+        .headers
+        .get("X-CAD-Company-Id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned)
+}
+
+#[tokio::test]
+async fn company_id_dash_picks_a_company_for_this_command_and_saves_nothing() {
+    let server = two_company_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (store, profiles) = store_with_login(&server.uri(), dir.path());
+    choose_company(&profiles, OTHER_COMPANY_ID);
+    let saved = std::fs::read(dir.path().join("cad-cli").join("profiles.json")).unwrap();
+    // The person picks the first of the list, Acme; the cursor starts on the
+    // profile's company, the second.
+    let terminal = FakeTerminal::picking(&[0]);
+
+    run_with_store(
+        &[
+            "cad-cli",
+            "--output",
+            "json",
+            "--company-id",
+            "-",
+            "reporting-period",
+            "list",
+        ],
+        &FakeEnvironment::default(),
+        &store,
+        &profiles,
+        &terminal,
+    )
+    .await
+    .expect("the picked company is used");
+
+    assert_eq!(
+        terminal.menus(),
+        [(
+            "Company:".to_owned(),
+            vec![
+                format!("Acme GmbH  {COMPANY_ID}"),
+                format!("Other AG  {OTHER_COMPANY_ID}"),
+            ],
+            1
+        )]
+    );
+    let requests = server.received_requests().await.unwrap();
+    // The key, the companies and the roles with no company; then the access
+    // to the picked one, and the command.
+    assert_eq!(requests.len(), 5, "{:?}", request_paths(&server).await);
+    assert!(
+        requests[..3]
+            .iter()
+            .all(|request| company_header(request).is_none())
+    );
+    assert_eq!(requests[3].url.path(), IDENTITY_PATH);
+    assert_eq!(requests[4].url.path(), REPORTING_PERIODS_PATH);
+    for request in &requests[3..] {
+        assert_eq!(company_header(request), Some(COMPANY_ID.to_string()));
+    }
+    assert_eq!(
+        std::fs::read(dir.path().join("cad-cli").join("profiles.json")).unwrap(),
+        saved,
+        "the pick is for this command only"
+    );
+}
+
+#[tokio::test]
+async fn company_id_dash_beats_the_environment_and_gives_up_with_the_picker() {
+    let server = two_company_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (store, profiles) = store_with_login(&server.uri(), dir.path());
+    // `credentials()` has CAD_COMPANY_ID too; `-` asks instead.
+    let terminal = FakeTerminal::picking(&[]);
+    let environment = FakeEnvironment(HashMap::from([(
+        "CAD_COMPANY_ID".to_owned(),
+        COMPANY_ID.to_string(),
+    )]));
+
+    let error = run_with_store(
+        &["cad-cli", "--company-id", "-", "reporting-period", "list"],
+        &environment,
+        &store,
+        &profiles,
+        &terminal,
+    )
+    .await
+    .expect_err("the list was not answered");
+
+    assert_eq!(terminal.menus().len(), 1);
+    assert!(matches!(error, CliError::Input(_)), "{error}");
+    // Nothing was requested for a company, and the command never ran.
+    assert!(
+        !request_paths(&server)
+            .await
+            .contains(&format!("GET {REPORTING_PERIODS_PATH}"))
+    );
+}
+
+#[tokio::test]
+async fn company_id_dash_without_a_terminal_names_what_to_pass_and_requests_nothing() {
+    let server = two_company_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (store, profiles) = store_with_login(&server.uri(), dir.path());
+
+    let error = run_with_store(
+        &["cad-cli", "--company-id", "-", "reporting-period", "list"],
+        &FakeEnvironment::default(),
+        &store,
+        &profiles,
+        &FakeTerminal::default(),
+    )
+    .await
+    .expect_err("there is no one to ask");
+
+    assert!(matches!(error, CliError::Input(_)), "{error}");
+    assert_eq!(
+        error.to_string(),
+        "invalid input: `-` picks a company at a terminal, and there is none; pass --company-id \
+         <ID> or set CAD_COMPANY_ID"
+    );
+    assert_eq!(request_paths(&server).await, Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn company_id_dash_on_a_command_that_acts_on_no_company_is_a_usage_error() {
+    let server = two_company_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (store, profiles) = store_with_login(&server.uri(), dir.path());
+    let terminal = FakeTerminal::picking(&[0]);
+
+    let error = run_with_store(
+        &["cad-cli", "--company-id", "-", "company", "list"],
+        &FakeEnvironment::default(),
+        &store,
+        &profiles,
+        &terminal,
+    )
+    .await
+    .expect_err("`company list` acts on no company");
+
+    assert!(matches!(error, CliError::Input(_)), "{error}");
+    assert_eq!(
+        error.to_string(),
+        "invalid input: --company-id - picks a company, and this command acts on none"
+    );
+    assert_eq!(terminal.menus(), []);
+    assert_eq!(request_paths(&server).await, Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn company_id_dash_when_the_login_can_act_on_no_company_says_so() {
+    let server = two_company_server().await;
+    server.reset().await;
+    Mock::given(method("GET"))
+        .and(path(IDENTITY_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "principal": {"userId": Uuid::nil(), "affiliatedCompanyId": COMPANY_ID},
+            "companySelection": {"resolvedCompanyId": COMPANY_ID, "source": "DEFAULT"}
+        })))
+        .mount(&server)
+        .await;
+    for endpoint in [COMPANIES_PATH, USER_ROLES_PATH] {
+        Mock::given(method("GET"))
+            .and(path(endpoint))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+            .mount(&server)
+            .await;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let (store, profiles) = store_with_login(&server.uri(), dir.path());
+    let terminal = FakeTerminal::picking(&[0]);
+
+    let error = run_with_store(
+        &["cad-cli", "--company-id", "-", "reporting-period", "list"],
+        &FakeEnvironment::default(),
+        &store,
+        &profiles,
+        &terminal,
+    )
+    .await
+    .expect_err("there is nothing to pick");
+
+    assert_eq!(
+        error.to_string(),
+        "invalid input: your login cannot pick a company; it can act on no company"
+    );
+    assert_eq!(terminal.menus(), []);
 }

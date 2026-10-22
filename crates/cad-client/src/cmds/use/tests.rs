@@ -78,6 +78,8 @@ struct Scripted {
     selections: Mutex<VecDeque<usize>>,
     /// What `select` showed: the label, then the options.
     menus: Mutex<Vec<(String, Vec<String>)>>,
+    /// Where the cursor started in each of those menus.
+    starts: Mutex<Vec<usize>>,
     labels: Mutex<Vec<String>>,
     questions: Mutex<Vec<String>>,
     opened: Mutex<Vec<String>>,
@@ -140,6 +142,10 @@ impl Scripted {
 
     fn menus(&self) -> Vec<(String, Vec<String>)> {
         self.menus.lock().unwrap().clone()
+    }
+
+    fn starts(&self) -> Vec<usize> {
+        self.starts.lock().unwrap().clone()
     }
 
     fn opened(&self) -> Vec<String> {
@@ -212,11 +218,12 @@ impl Terminal for Scripted {
             .expect("a scripted answer"))
     }
 
-    fn select(&self, label: &str, options: &[String]) -> Result<usize, CliError> {
+    fn select(&self, label: &str, options: &[String], start: usize) -> Result<usize, CliError> {
         self.menus
             .lock()
             .unwrap()
             .push((label.to_owned(), options.to_vec()));
+        self.starts.lock().unwrap().push(start);
         self.selections
             .lock()
             .unwrap()
@@ -3249,4 +3256,305 @@ async fn check_fails_like_a_command_without_credentials_with_a_rejected_key_or_a
         .await
         .unwrap_err();
     assert_eq!(exit_code(&error), ExitCode::from(4));
+}
+
+// --- `-` picks from a list ------------------------------------------------------
+
+#[test]
+fn a_dash_parses_as_the_choice_to_pick_for_the_profile_and_the_company() {
+    use super::company::CompanyChoice;
+    use super::profile::ProfileChoice;
+    use crate::cli::CompanyArg;
+
+    let parse = |rest: &[&str]| {
+        let mut args = vec!["cad-cli"];
+        args.extend_from_slice(rest);
+        Cli::try_parse_from(args).expect("parses")
+    };
+
+    let Command::Use(group) = parse(&["use", "profile", "-"]).command else {
+        panic!("expected a use command");
+    };
+    let Some(super::Command::Profile(args)) = group.command else {
+        panic!("expected `use profile`");
+    };
+    assert_eq!(args.name, ProfileChoice::Pick);
+
+    let Command::Use(group) = parse(&["use", "company", "-"]).command else {
+        panic!("expected a use command");
+    };
+    let Some(super::Command::Company(args)) = group.command else {
+        panic!("expected `use company`");
+    };
+    assert_eq!(args.company, CompanyChoice::Pick);
+
+    let cli = parse(&["--company-id", "-", "use", "--check"]);
+    assert_eq!(cli.global.company_id, Some(CompanyArg::Pick));
+
+    // Neither a name nor a longer word that starts with a dash is a dash.
+    assert_eq!("-".parse::<CompanyChoice>(), Ok(CompanyChoice::Pick));
+    assert_eq!(
+        "-x".parse::<CompanyChoice>(),
+        Ok(CompanyChoice::Name("-x".to_owned()))
+    );
+    Cli::try_parse_from(["cad-cli", "use", "profile", "-x"]).expect_err("not a profile name");
+}
+
+/// A world with the logged-in profile `local` and `staging` (which has no
+/// login), the active one.
+async fn world_with_two_profiles() -> World {
+    let world = world().await;
+    login_local(&world).await;
+    world
+        .run(
+            &["use", "profile", "staging"],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(world.set().active(), Some(&name("staging")));
+    world
+}
+
+#[tokio::test]
+async fn use_profile_dash_lists_the_profiles_and_switches_to_the_one_picked_without_a_request() {
+    let world = world_with_two_profiles().await;
+    let before = world.requests().await;
+    let reads = Arc::new(AtomicUsize::new(0));
+    let counting = CredentialStore::new(
+        Some(Box::new(CountingKeyring {
+            reads: Arc::clone(&reads),
+        })),
+        Some(FileBackend::new(world.credentials_file.clone())),
+    );
+    let terminal = Scripted::picking(&[0]);
+
+    let report = world
+        .run_store(
+            &["use", "profile", "-"],
+            &terminal,
+            &Env::default(),
+            &counting,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        terminal.menus(),
+        [(
+            "Profile:".to_owned(),
+            vec![
+                format!("local  {}  {EMAIL}", world.origin),
+                "staging  https://staging.carbonaltdelete.eu  no login".to_owned(),
+            ]
+        )]
+    );
+    assert_eq!(
+        terminal.starts(),
+        [1],
+        "the cursor starts on the active one"
+    );
+    assert_eq!(world.requests().await, before, "no request");
+    assert_eq!(reads.load(Ordering::SeqCst), 0, "the keyring was not read");
+    assert_eq!(world.set().active(), Some(&name("local")));
+    assert_eq!(report.value["name"], "local");
+    assert_eq!(report.value["previous"], "staging");
+    assert_eq!(
+        report.messages.last().unwrap().1,
+        format!(
+            "now using local ({}) as {EMAIL} (was staging)",
+            world.origin
+        )
+    );
+}
+
+#[tokio::test]
+async fn use_profile_dash_gives_up_with_the_list_and_changes_nothing() {
+    let world = world_with_two_profiles().await;
+    let terminal = Scripted::picking(&[]);
+
+    let error = world
+        .run(&["use", "profile", "-"], &terminal, &Env::default())
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, CliError::Cancelled), "{error}");
+    assert_eq!(world.set().active(), Some(&name("staging")));
+}
+
+#[tokio::test]
+async fn use_profile_dash_refuses_a_url_and_no_profiles_and_no_terminal() {
+    let world = world_with_two_profiles().await;
+    let before = world.requests().await;
+
+    let terminal = Scripted::picking(&[0]);
+    let error = world
+        .run(
+            &["use", "profile", "-", "--url", "https://x.test"],
+            &terminal,
+            &Env::default(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, CliError::Input(_)), "{error}");
+    assert_eq!(
+        error.to_string(),
+        "invalid input: --url needs a profile name, not -"
+    );
+
+    let error = world
+        .run(
+            &["use", "profile", "-"],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, CliError::Input(_)), "{error}");
+    assert_eq!(
+        error.to_string(),
+        "invalid input: `-` picks a profile at a terminal, and there is none; name the profile"
+    );
+    assert_eq!(terminal.menus(), []);
+    assert_eq!(world.requests().await, before);
+    assert_eq!(world.set().active(), Some(&name("staging")));
+
+    let empty = self::world().await;
+    let terminal = Scripted::picking(&[0]);
+    let error = empty
+        .run(&["use", "profile", "-"], &terminal, &Env::default())
+        .await
+        .unwrap_err();
+    assert!(matches!(error, CliError::Input(_)), "{error}");
+    assert_eq!(
+        error.to_string(),
+        "invalid input: there is no profile to pick; create one with `cad-cli use profile <name>`"
+    );
+    assert_eq!(terminal.menus(), []);
+}
+
+#[tokio::test]
+async fn use_company_dash_lists_the_companies_and_saves_the_one_picked_after_its_access_check() {
+    let world = world_with_two_companies().await;
+    world
+        .run(
+            &["use", "company", OTHER_COMPANY_ID],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+    let before = world.requests().await;
+    let terminal = Scripted::picking(&[0]);
+
+    let report = world
+        .run(&["use", "company", "-"], &terminal, &Env::default())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        terminal.menus(),
+        [(
+            "Company:".to_owned(),
+            vec![
+                format!("Acme GmbH  {COMPANY_ID}"),
+                format!("Other AG  {OTHER_COMPANY_ID}"),
+            ]
+        )]
+    );
+    assert_eq!(
+        terminal.starts(),
+        [1],
+        "the cursor starts on the profile's company"
+    );
+    assert_eq!(report.value["companyId"], COMPANY_ID);
+    assert_eq!(report.value["previousCompanyId"], OTHER_COMPANY_ID);
+    assert_eq!(
+        company_of(&world, "local"),
+        Some(chosen(COMPANY_ID, Some("Acme GmbH")))
+    );
+    // The key, the companies, the roles, and access to the one picked.
+    assert_eq!(world.requests().await, before + 4);
+    let requests = world.server.received_requests().await.unwrap();
+    let last = requests.last().unwrap();
+    assert_eq!(last.url.path(), IDENTITY_PATH);
+    assert_eq!(
+        last.headers
+            .get("X-CAD-Company-Id")
+            .and_then(|value| value.to_str().ok()),
+        Some(COMPANY_ID)
+    );
+}
+
+#[tokio::test]
+async fn use_company_dash_starts_on_the_first_company_when_the_profile_has_none() {
+    let world = world_with_two_companies().await;
+    let terminal = Scripted::picking(&[1]);
+
+    world
+        .run(&["use", "company", "-"], &terminal, &Env::default())
+        .await
+        .unwrap();
+
+    assert_eq!(terminal.starts(), [0]);
+    assert_eq!(
+        company_of(&world, "local"),
+        Some(chosen(OTHER_COMPANY_ID, Some("Other AG")))
+    );
+}
+
+#[tokio::test]
+async fn use_company_dash_gives_up_with_the_list_and_saves_nothing() {
+    let world = world_with_two_companies().await;
+    let terminal = Scripted::picking(&[]);
+
+    let error = world
+        .run(&["use", "company", "-"], &terminal, &Env::default())
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, CliError::Cancelled), "{error}");
+    assert_eq!(company_of(&world, "local"), None);
+}
+
+#[tokio::test]
+async fn use_company_dash_without_a_terminal_names_what_to_pass_and_requests_nothing() {
+    let world = world_with_two_companies().await;
+    let before = world.requests().await;
+
+    let error = world
+        .run(
+            &["use", "company", "-"],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, CliError::Input(_)), "{error}");
+    assert_eq!(
+        error.to_string(),
+        "invalid input: `-` picks a company at a terminal, and there is none; pass its ID or name"
+    );
+    assert_eq!(world.requests().await, before);
+}
+
+#[tokio::test]
+async fn use_company_dash_when_the_login_can_act_on_no_company_is_refused() {
+    let world = world_with_roles(&[other_company()], Vec::new()).await;
+    login_local(&world).await;
+    let terminal = Scripted::picking(&[0]);
+
+    let error = world
+        .run(&["use", "company", "-"], &terminal, &Env::default())
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, CliError::Input(_)), "{error}");
+    assert_eq!(
+        error.to_string(),
+        "invalid input: your login cannot pick a company; it can act on no company"
+    );
+    assert_eq!(terminal.menus(), []);
 }

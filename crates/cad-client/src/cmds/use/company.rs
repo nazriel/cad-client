@@ -10,19 +10,23 @@ use super::{CompanyArgs, Report, no_company};
 use crate::app::context::CommandContext;
 use crate::app::platform::Platform;
 use crate::cli::GlobalArgs;
+use crate::cli::args::PICK;
 use crate::config::{AppConfig, Environment, resolve_credentials, select, select_profile};
 use crate::error::CliError;
 use crate::output::to_value;
 use crate::support::credentials::{CredentialStore, origin_of};
 use crate::support::operable::operable_companies;
+use crate::support::pick::{self, Picking};
 use crate::support::profiles::{Company, Login, ProfileName, ProfileStore};
 use crate::support::terminal::StatusKind;
 
-/// The argument of `cad-cli use company`: a company's ID, or its name.
+/// The argument of `cad-cli use company`: a company's ID, or its name, or `-`
+/// to pick one from a list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CompanyChoice {
     Id(CompanyId),
     Name(String),
+    Pick,
 }
 
 impl FromStr for CompanyChoice {
@@ -32,6 +36,9 @@ impl FromStr for CompanyChoice {
         let value = value.trim();
         if value.is_empty() {
             return Err("name the company by its name or its ID".to_owned());
+        }
+        if value == PICK {
+            return Ok(Self::Pick);
         }
         Ok(value
             .parse::<CompanyId>()
@@ -92,6 +99,7 @@ fn find(choice: &CompanyChoice, operable: &[Company]) -> Result<Company, CliErro
                 });
         }
         CompanyChoice::Name(name) => name,
+        CompanyChoice::Pick => unreachable!("`-` is picked from the list, not found in it"),
     };
     let wanted_lowercase = wanted.to_lowercase();
     let mut found: Vec<_> = operable
@@ -141,6 +149,9 @@ pub(super) async fn run(
                 .to_owned(),
         ));
     }
+    if args.company == CompanyChoice::Pick {
+        pick::require_terminal(context.terminal(), Picking::CompanyArgument)?;
+    }
     let set = profiles.load()?;
     let Some(selected) = select_profile(global, environment, &set)? else {
         return Err(CliError::config_with_hint(
@@ -165,7 +176,19 @@ pub(super) async fn run(
     let operable = context
         .during("listing the companies", operable_companies(client))
         .await?;
-    let company = find(&args.company, &operable)?;
+    let company = match &args.company {
+        CompanyChoice::Pick => {
+            if operable.is_empty() {
+                return Err(refusal("your login cannot pick a company", &operable));
+            }
+            let current = set
+                .get(&name)
+                .and_then(|profile| profile.company.as_ref())
+                .map(|company| company.id);
+            pick::company(context.terminal(), &operable, current)?
+        }
+        choice => find(choice, &operable)?,
+    };
     context
         .during(
             "checking access to the company",
@@ -272,7 +295,7 @@ pub(super) async fn offer(
                     None => company.id.to_string(),
                 })
                 .collect();
-            match terminal.select(&format!("Company for profile {profile}:"), &options) {
+            match terminal.select(&format!("Company for profile {profile}:"), &options, 0) {
                 Ok(index) => several.get(index).cloned(),
                 Err(CliError::Cancelled) => None,
                 Err(error) => return Err(error),
