@@ -160,8 +160,8 @@ line.
   `--url`, and a profile with no login is left without one and says how to give
   it one.
 
-Once the login is made, the company is chosen: the only company the key can act
-on is taken, and with several you pick one in a terminal. See
+Once the login is made, the company is chosen: the only company your login can
+act on is taken, and with several you pick one in a terminal. See
 [Companies](#companies) to choose or change it.
 
 ```console
@@ -191,8 +191,11 @@ cad-cli use company 00000000-0000-0000-0000-000000000001
 ```
 
 A name is matched exactly, ignoring case and surrounding spaces; a name several
-companies share is refused with their IDs. The company must be one the key can
-act on: it is checked with the server before it is saved, and it is kept in the
+companies share is refused with their IDs. `use company` offers, and accepts,
+only the companies your login can act on: your own company and those you hold a
+role in. Any other company is refused at once, with the ones you can choose
+listed; `cad-cli company list` still shows every company the key can see. The
+company is checked with the server before it is saved, and it is kept in the
 profile, so `cad-cli --profile staging use company …` chooses it for another
 profile without switching to it.
 
