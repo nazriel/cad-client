@@ -36,7 +36,7 @@ Every command accepts these options.
 |---|---|
 | `--profile <NAME>` | Use this profile instead of the active one (see `cad-cli use`). |
 | `--server-url <SERVER_URL>` | Exact application origin, instead of the profile's. A stored login is used only with the profile whose server this is. |
-| `--company-id <COMPANY_ID>` | Accessible company to act on, instead of the profile's (see `cad-cli use company`). |
+| `--company-id <ID|->` | Accessible company to act on, instead of the profile's (see `cad-cli use company`). `-` picks one from a list at a terminal, for this command only. |
 | `--allow-insecure-http` | Permit HTTP for localhost/loopback mock servers. |
 | `--request-timeout <REQUEST_TIMEOUT>` | Total time allowed for one API request, including its response body. Default: `60s`. |
 | `--output <OUTPUT>` | Select human-readable or machine-readable output. With json or jsonl a failure is one JSON object on stderr; usage errors from the argument parser stay text. Values: `table`, `json`, `jsonl`. Default: `table`. |
@@ -87,4 +87,10 @@ Run a command for another accessible company:
 
 ```console
 cad-cli --company-id 00000000-0000-0000-0000-000000000001 reporting-period list
+```
+
+Pick the company from a list at a terminal for this one command; nothing is saved:
+
+```console
+cad-cli --company-id - reporting-period list
 ```

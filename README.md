@@ -139,7 +139,8 @@ cad-cli use profile local --url http://localhost:5001 --allow-insecure-http
 A profile name is 1 to 32 characters of `a-z`, `0-9`, `-` and `_`. Several
 profiles may use the same server. Naming a profile that exists makes it the
 active one, which every command uses unless `--profile` or `CAD_PROFILE` names
-another.
+another. Pass `-` instead of a name to pick one of your profiles from a list at
+a terminal: type to filter it, Enter to choose, Esc to cancel.
 
 A profile with no login is offered one. This prints the API keys page and opens
 it in your browser. The page shows the **Key ID** (a UUID) and the **Secret**
@@ -202,7 +203,9 @@ profile without switching to it.
 A command that acts on a company stops with exit status 2 when none is
 selected, rather than guess, and says how to choose one. Pass `--company-id`
 for one command, or set `CAD_COMPANY_ID` for one shell; both take precedence
-over the profile's company. `company` and `company-template` act on the
+over the profile's company. `-` picks a company from a list at a terminal:
+`cad-cli use company -` saves it on the profile, and `--company-id -` uses it
+for that one command only. `company` and `company-template` act on the
 session, not on a company, and need none.
 
 ### Where the login is kept

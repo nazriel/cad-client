@@ -32,15 +32,17 @@ It is kept in the system keyring (macOS Keychain, Windows Credential Manager, or
 
 `CAD_API_KEY` and `CAD_API_SECRET` take precedence over a stored login.
 
+`-` instead of a name picks one of the profiles there are from a list at a terminal: type to filter it, Enter to choose, Esc to cancel. The one chosen is then used as if it had been named. `-` cannot be combined with `--url`.
+
 ```console
-cad-cli use profile [OPTIONS] <NAME>
+cad-cli use profile [OPTIONS] <NAME|->
 ```
 
 ### Arguments
 
 | Argument | Description |
 |---|---|
-| `<NAME>` | Name of the profile: 1 to 32 characters of a-z, 0-9, - and _. |
+| `<NAME|->` | Name of the profile: 1 to 32 characters of a-z, 0-9, - and _. `-` picks one of the profiles there are, from a list at a terminal. |
 
 ### Options
 
@@ -59,6 +61,12 @@ Switch to a profile; a new one asks for its server and offers to log in:
 
 ```console
 cad-cli use profile production
+```
+
+Pick one of the profiles from a list at a terminal, typing to filter it:
+
+```console
+cad-cli use profile -
 ```
 
 Log in again, opening the API keys page and asking for the Key ID and the Secret:
@@ -99,15 +107,17 @@ The company is given by its name, matched exactly, ignoring case and surrounding
 
 Commands that act on a company use the profile's company, unless `--company-id` or `CAD_COMPANY_ID` names another. Without any, they refuse to run. This changes the profile for every shell; use `--company-id` for a single command.
 
+`-` instead of a company picks one of the companies the login can act on from a list at a terminal: type to filter it, Enter to choose, Esc to cancel. The one chosen is then checked and saved as if it had been named.
+
 ```console
-cad-cli use company [OPTIONS] <COMPANY>
+cad-cli use company [OPTIONS] <COMPANY|->
 ```
 
 ### Arguments
 
 | Argument | Description |
 |---|---|
-| `<COMPANY>` | Name or ID of the company. |
+| `<COMPANY|->` | Name or ID of the company, or `-` to pick one from a list at a terminal. |
 
 ### Examples
 
@@ -121,6 +131,12 @@ Act on a company by its ID:
 
 ```console
 cad-cli use company 00000000-0000-0000-0000-000000000001
+```
+
+Pick the company from a list at a terminal, typing to filter it:
+
+```console
+cad-cli use company -
 ```
 
 Choose the company of another profile, leaving the active profile as it is:
