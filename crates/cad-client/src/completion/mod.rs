@@ -35,14 +35,16 @@ use clap::{CommandFactory, FromArgMatches};
 use clap_complete::engine::{ArgValueCompleter, CompletionCandidate};
 use clap_complete::env::{Bash, Elvish, EnvCompleter, Fish, Powershell, Shells, Zsh};
 use clap_complete::{CompleteEnv, Shell};
+use uuid::Uuid;
 
 use self::cache::{Cache, CacheKey, Candidate, Network};
 use crate::cli::{Cli, GlobalArgs};
 use crate::config::{
-    AppConfig, Environment, ProcessEnvironment, resolve_credentials, select, select_company,
+    AppConfig, Environment, ProcessEnvironment, Selection, resolve_credentials, select,
+    select_company,
 };
 use crate::support::credentials::CredentialStore;
-use crate::support::profiles::ProfileStore;
+use crate::support::profiles::{ProfileSet, ProfileStore};
 use crate::support::switch::is_off_word;
 
 /// Name the shell completes, and the program its registration calls back.
@@ -240,9 +242,10 @@ pub(crate) fn candidates(
         return Vec::new();
     };
     // Without a server and a key identifier there is no cache key either, so
-    // there is nothing to answer from; the secret is only needed to go live.
-    // The credentials are found once, here, and reused by the live lookup, so
-    // the store is read at most once per request.
+    // there is nothing to answer from. The key identifier comes from the
+    // environment or from the profile's metadata, never from the credential
+    // store: the secret, and the keyring that may hold it, are only needed to
+    // go live, so a cache hit reads neither.
     global.request_timeout = lookup::LIVE_TIMEOUT;
     let Ok(profiles) = profiles.load() else {
         return Vec::new();
@@ -250,10 +253,9 @@ pub(crate) fn candidates(
     let Ok(selection) = select(&global, environment, &profiles) else {
         return Vec::new();
     };
-    let Ok(resolved) = resolve_credentials(environment, store, &selection) else {
+    let Some(api_key_id) = cache_key_id(environment, &selection, &profiles) else {
         return Vec::new();
     };
-    let api_key_id = resolved.key_id();
     let origin = selection.server.base_url().as_str().to_owned();
     let origin = origin.as_str();
     // Reporting periods belong to the selected company; without one there is
@@ -278,9 +280,33 @@ pub(crate) fn candidates(
     };
     let cache = Cache::from_environment(environment);
     cache::lookup(cache.as_ref(), &key, network, now, || {
+        // The only place the credential store is read. Credentials that are
+        // for another key than the one the cache key names (the profile was
+        // logged in again since) must not fill that key's entry.
+        let resolved = resolve_credentials(environment, store, &selection).ok()?;
+        if resolved.key_id() != api_key_id {
+            return None;
+        }
         let config = AppConfig::resolve_with(selection, resolved, company).ok()?;
         lookup::fetch(resource, config)
     })
+}
+
+/// The Key ID the credentials of this request will have, without reading them.
+///
+/// As [`resolve_credentials`] decides: `CAD_API_KEY` or `CAD_API_SECRET` set
+/// means the environment alone, and `CAD_API_KEY` must then be a UUID. Else it
+/// is the `login` the selected profile records in the profiles file.
+fn cache_key_id(
+    environment: &impl Environment,
+    selection: &Selection,
+    profiles: &ProfileSet,
+) -> Option<Uuid> {
+    if environment.get("CAD_API_KEY").is_some() || environment.get("CAD_API_SECRET").is_some() {
+        return environment.get("CAD_API_KEY")?.parse().ok();
+    }
+    let profile = profiles.get(selection.profile_name()?)?;
+    Some(profile.login.as_ref()?.key_id)
 }
 
 /// The global options among the preceding words, parsed leniently: an
