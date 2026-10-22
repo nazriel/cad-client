@@ -11,7 +11,7 @@ use super::{ProfileArgs, ProfileRow, Report, company, forget, list, no_company};
 use crate::app::context::CommandContext;
 use crate::cli::GlobalArgs;
 use crate::cli::args::PICK;
-use crate::config::{Environment, build_server, origin_of_raw, select_profile};
+use crate::config::{Environment, build_server, origin_of_raw};
 use crate::error::CliError;
 use crate::output::to_value;
 use crate::support::credentials::{CredentialStore, origin_of};
@@ -155,13 +155,7 @@ pub(super) async fn run(
     set.activate(name.clone());
     profiles.save(&set)?;
 
-    // `CAD_PROFILE` (or a server in the environment) can still win in this
-    // shell, so whether the profile is selected is asked of the selection.
-    let selected = select_profile(global, environment, &set)
-        .ok()
-        .flatten()
-        .map(|selected| selected.name);
-    let row = list::rows(&set, selected.as_ref())
+    let row = list::rows(&set)
         .into_iter()
         .find(|row| row.name == name)
         .expect("the profile was just saved");
@@ -187,7 +181,7 @@ fn pick_profile(
         ));
     }
     pick::require_terminal(terminal, Picking::Profile)?;
-    let rows = list::rows(set, None);
+    let rows = list::rows(set);
     if rows.is_empty() {
         return Err(CliError::Input(
             "there is no profile to pick; create one with `cad-cli use profile <name>`".to_owned(),
@@ -200,7 +194,7 @@ fn pick_profile(
                 "{}  {}  {}",
                 row.name,
                 row.url,
-                row.account().unwrap_or_else(|| "no login".to_owned())
+                row.account.as_deref().unwrap_or("no login")
             )
         })
         .collect();
@@ -218,7 +212,7 @@ fn now_using(
     environment: &impl Environment,
 ) -> Vec<(StatusKind, String)> {
     let name = &row.name;
-    let who = row.account().map_or_else(
+    let who = row.account.as_ref().map_or_else(
         || "with no login".to_owned(),
         |account| format!("as {account}"),
     );

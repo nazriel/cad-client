@@ -18,12 +18,10 @@ mod profile;
 #[cfg(test)]
 mod tests;
 
-use cad_api::ids::{CompanyId, UserId};
-use chrono::{DateTime, Utc};
+use cad_api::ids::CompanyId;
 use clap::{Args, Subcommand};
 use serde::Serialize;
 use serde_json::Value;
-use uuid::Uuid;
 
 use self::company::CompanyChoice;
 use self::profile::ProfileChoice;
@@ -32,8 +30,8 @@ use crate::cli::GlobalArgs;
 use crate::cli::help::{self, Example};
 use crate::config::Environment;
 use crate::error::CliError;
-use crate::support::credentials::{CredentialStore, Place};
-use crate::support::profiles::{Profile, ProfileName, ProfileStore};
+use crate::support::credentials::CredentialStore;
+use crate::support::profiles::{Login, Profile, ProfileName, ProfileStore};
 use crate::support::terminal::StatusKind;
 
 const USE_EXAMPLES: &[Example] = &[
@@ -224,9 +222,10 @@ pub(crate) struct Report {
     pub(crate) messages: Vec<(StatusKind, String)>,
 }
 
-/// One profile as `use` shows it: flat, so that every output format, a table
-/// included, can carry it as it is. The login's fields are `null` for a
-/// profile with no login.
+/// One profile as `use` shows it: flat and slim, so that every output format, a
+/// table included, can carry it as it is. `account` and the company are `null`
+/// for a profile with no login or no company. The rest of the login (key,
+/// storage) is in the profiles file and in `use --check`.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProfileRow {
@@ -234,44 +233,26 @@ pub(crate) struct ProfileRow {
     pub(crate) url: String,
     /// Whether it is the active profile.
     pub(crate) active: bool,
-    /// Whether commands run now would use it.
-    pub(crate) selected: bool,
-    pub(crate) email: Option<String>,
-    pub(crate) user_id: Option<UserId>,
-    pub(crate) key_id: Option<Uuid>,
-    pub(crate) storage: Option<Place>,
-    pub(crate) stored_at: Option<DateTime<Utc>>,
+    /// Who the login is for: the e-mail, or the user ID when the e-mail is not
+    /// known; `None` without a login.
+    pub(crate) account: Option<String>,
     pub(crate) company_id: Option<CompanyId>,
     pub(crate) company_name: Option<String>,
 }
 
 impl ProfileRow {
-    pub(crate) fn new(name: &ProfileName, profile: &Profile, active: bool, selected: bool) -> Self {
-        let login = profile.login.as_ref();
+    pub(crate) fn new(name: &ProfileName, profile: &Profile, active: bool) -> Self {
         Self {
             name: name.clone(),
             url: profile.url.clone(),
             active,
-            selected,
-            email: login.and_then(|login| login.email.clone()),
-            user_id: login.map(|login| login.user_id),
-            key_id: login.map(|login| login.key_id),
-            storage: login.map(|login| login.storage),
-            stored_at: login.map(|login| login.stored_at),
+            account: profile.login.as_ref().map(Login::account),
             company_id: profile.company.as_ref().map(|company| company.id),
             company_name: profile
                 .company
                 .as_ref()
                 .and_then(|company| company.name.clone()),
         }
-    }
-
-    /// Who the profile is logged in as: the e-mail, or the user ID when the
-    /// e-mail is not known; `None` without a login.
-    pub(crate) fn account(&self) -> Option<String> {
-        self.email
-            .clone()
-            .or_else(|| self.user_id.map(|user_id| user_id.to_string()))
     }
 }
 

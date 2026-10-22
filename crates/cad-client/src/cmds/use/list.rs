@@ -5,20 +5,13 @@ use crate::cli::GlobalArgs;
 use crate::config::{Environment, select_profile};
 use crate::error::CliError;
 use crate::output::to_value;
-use crate::support::profiles::{ProfileName, ProfileSet, ProfileStore};
+use crate::support::profiles::{ProfileSet, ProfileStore};
 use crate::support::terminal::StatusKind;
 
-/// The rows of every profile, sorted by name; `selected` marks the one named.
-pub(super) fn rows(set: &ProfileSet, selected: Option<&ProfileName>) -> Vec<ProfileRow> {
+/// The rows of every profile, sorted by name.
+pub(super) fn rows(set: &ProfileSet) -> Vec<ProfileRow> {
     set.iter()
-        .map(|(name, profile)| {
-            ProfileRow::new(
-                name,
-                profile,
-                set.active() == Some(name),
-                selected == Some(name),
-            )
-        })
+        .map(|(name, profile)| ProfileRow::new(name, profile, set.active() == Some(name)))
         .collect()
 }
 
@@ -30,7 +23,7 @@ pub(super) fn run(
 ) -> Result<Report, CliError> {
     let set = profiles.load()?;
     let selected = select_profile(global, environment, &set)?;
-    let rows = rows(&set, selected.as_ref().map(|selected| &selected.name));
+    let rows = rows(&set);
 
     let value = to_value(&rows)?;
     let message = match (&selected, set.is_empty()) {

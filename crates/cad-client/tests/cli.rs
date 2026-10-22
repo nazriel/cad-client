@@ -592,11 +592,7 @@ async fn a_new_profile_logs_in_and_later_commands_use_its_server_and_login() {
     assert_eq!(row["name"], "local");
     assert_eq!(row["url"], server.uri());
     assert_eq!(row["active"], true);
-    assert_eq!(row["selected"], true);
-    assert_eq!(row["keyId"], KEY_ID);
-    assert_eq!(row["userId"], USER_ID);
-    assert_eq!(row["email"], EMAIL);
-    assert_eq!(row["storage"], "file");
+    assert_eq!(row["account"], EMAIL);
     assert!(stderr.contains("logged in to"), "{stderr}");
     assert!(stderr.contains(EMAIL), "{stderr}");
     assert!(
@@ -658,7 +654,7 @@ async fn a_new_profile_logs_in_and_later_commands_use_its_server_and_login() {
     let rows: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(rows[0]["name"], "local");
     assert_eq!(rows[0]["active"], true);
-    assert_eq!(rows[0]["email"], EMAIL);
+    assert_eq!(rows[0]["account"], EMAIL);
     assert!(!String::from_utf8_lossy(&output.stdout).contains(SECRET));
     assert_eq!(server.received_requests().await.unwrap().len(), before);
 }
@@ -744,8 +740,7 @@ async fn a_failing_users_request_still_logs_in_with_no_email() {
     let output = run(login).await.success().get_output().clone();
 
     let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(result["email"], serde_json::Value::Null);
-    assert_eq!(result["userId"], USER_ID);
+    assert_eq!(result["account"], USER_ID);
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("could not read the e-mail"),
         "{}",
@@ -829,7 +824,7 @@ async fn switching_to_a_logged_in_profile_makes_no_request() {
 
     let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(result["previous"], "staging");
-    assert_eq!(result["email"], EMAIL);
+    assert_eq!(result["account"], EMAIL);
     assert_eq!(stored_profiles(home.path())["active"], "local");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -858,7 +853,7 @@ fn a_known_name_without_a_terminal_or_a_url_takes_its_suggestion_and_says_so() {
         .clone();
     let result: serde_json::Value = serde_json::from_slice(&output).unwrap();
     assert_eq!(result["url"], "https://staging.carbonaltdelete.eu");
-    assert_eq!(result["keyId"], serde_json::Value::Null);
+    assert_eq!(result["account"], serde_json::Value::Null);
     let profiles = stored_profiles(home.path());
     assert_eq!(profiles["active"], "staging");
     assert_eq!(
@@ -929,7 +924,7 @@ fn use_without_profiles_lists_nothing_and_says_how_to_start() {
 }
 
 #[test]
-fn use_marks_the_selected_profile_apart_from_the_active_one() {
+fn use_says_which_profile_is_in_use_and_why_apart_from_the_active_one() {
     let home = tempfile::tempdir().unwrap();
     write_profiles(
         home.path(),
@@ -952,28 +947,17 @@ fn use_marks_the_selected_profile_apart_from_the_active_one() {
 
     let (rows, stderr) = list(None);
     assert_eq!(rows[0]["name"], "production");
-    assert_eq!(
-        (rows[0]["active"].as_bool(), rows[0]["selected"].as_bool()),
-        (Some(false), Some(false))
-    );
-    assert_eq!(
-        (rows[1]["active"].as_bool(), rows[1]["selected"].as_bool()),
-        (Some(true), Some(true))
-    );
+    assert_eq!(rows[0]["active"], false);
+    assert_eq!(rows[1]["active"], true);
     assert!(
         stderr.contains("using profile staging (the active profile)"),
         "{stderr}"
     );
 
     let (rows, stderr) = list(Some("production"));
-    assert_eq!(
-        (rows[0]["active"].as_bool(), rows[0]["selected"].as_bool()),
-        (Some(false), Some(true))
-    );
-    assert_eq!(
-        (rows[1]["active"].as_bool(), rows[1]["selected"].as_bool()),
-        (Some(true), Some(false))
-    );
+    assert_eq!(rows[0]["active"], false);
+    assert_eq!(rows[1]["active"], true);
+    assert!(rows[0].get("selected").is_none());
     assert!(
         stderr.contains("using profile production (selected by CAD_PROFILE)"),
         "{stderr}"
@@ -1002,7 +986,8 @@ fn use_renders_a_table_with_the_account_in_its_columns() {
         .stdout(
             predicate::str::contains(EMAIL)
                 .and(predicate::str::contains("staging"))
-                .and(predicate::str::contains("email")),
+                .and(predicate::str::contains("account"))
+                .and(predicate::str::contains("keyId").not()),
         );
 }
 

@@ -495,6 +495,15 @@ impl World {
         self.profiles.load().unwrap()
     }
 
+    /// Where the login of `profile` is kept, as the profiles file records it.
+    fn storage(&self, profile: &str) -> String {
+        self.set()
+            .get(&name(profile))
+            .and_then(|profile| profile.login.as_ref())
+            .map(|login| login.storage.to_string())
+            .expect("the profile has a login")
+    }
+
     fn stored(&self) -> bool {
         self.keyring.text("local").is_some() || self.credentials_file.exists()
     }
@@ -633,17 +642,26 @@ async fn a_new_profile_with_a_token_stores_the_login_the_email_and_the_active_pr
         .unwrap();
 
     let file = world.credentials_file.display().to_string();
-    assert_eq!(report.value["keyId"].as_str(), Some(KEY_ID));
     assert_eq!(report.value["previous"], Value::Null);
     let row = &report.value;
     assert_eq!(row["name"], "local");
     assert_eq!(row["url"], world.origin.as_str());
     assert_eq!(row["active"], true);
-    assert_eq!(row["selected"], true);
-    assert_eq!(row["userId"], USER_ID);
-    assert_eq!(row["email"], EMAIL);
-    assert_eq!(row["storage"], "file");
-    assert!(row["storedAt"].as_str().unwrap().ends_with('Z'));
+    assert_eq!(row["account"], EMAIL);
+    assert_eq!(world.storage("local"), "file");
+    let login = world
+        .set()
+        .get(&name("local"))
+        .unwrap()
+        .login
+        .clone()
+        .unwrap();
+    assert_eq!(login.key_id.to_string(), KEY_ID);
+    assert!(
+        std::fs::read_to_string(&world.profiles_file)
+            .unwrap()
+            .contains("\"storedAt\"")
+    );
 
     assert_eq!(
         report.messages,
@@ -711,7 +729,7 @@ async fn login_prefers_the_keyring_and_files_the_entry_under_the_profile() {
         .await
         .unwrap();
 
-    assert_eq!(report.value["storage"], "keyring");
+    assert_eq!(world.storage("local"), "keyring");
     assert_eq!(
         report.messages[0].1,
         format!(
@@ -842,9 +860,7 @@ async fn a_failing_users_request_still_logs_in_with_no_email() {
         .await
         .unwrap();
 
-    let login = &report.value;
-    assert_eq!(login["email"], Value::Null);
-    assert_eq!(login["userId"], USER_ID);
+    assert_eq!(report.value["account"], USER_ID);
     assert_eq!(report.messages[0].0, StatusKind::Success);
     assert!(report.messages[0].1.contains(&format!("as {USER_ID}")));
     assert_eq!(report.messages[1].0, StatusKind::Warning);
@@ -970,7 +986,7 @@ async fn at_a_terminal_a_failed_keyring_offers_the_file_and_only_yes_writes_it()
 
     // `--yes` is not an answer: the question is asked all the same.
     let accepted = Scripted::typing(&[KEY_ID], &[SECRET], &[true]);
-    let report = world
+    world
         .run(
             &[
                 "--yes",
@@ -989,7 +1005,7 @@ async fn at_a_terminal_a_failed_keyring_offers_the_file_and_only_yes_writes_it()
         .await
         .unwrap();
     assert_eq!(accepted.questions().len(), 1);
-    assert_eq!(report.value["storage"], "file");
+    assert_eq!(world.storage("local"), "file");
     assert!(world.credentials_file.exists());
 }
 
@@ -1001,12 +1017,12 @@ async fn at_a_terminal_the_two_values_are_asked_apart_and_asked_again_when_malfo
         &["nope", "cad_aks_short", SECRET],
         &[],
     );
-    let report = world
+    world
         .profile("local", &["--login"], &terminal, &Env::default())
         .await
         .unwrap();
 
-    assert_eq!(report.value["storage"], "keyring");
+    assert_eq!(world.storage("local"), "keyring");
     let statuses = terminal.statuses();
     let warnings: Vec<_> = statuses
         .iter()
@@ -1140,7 +1156,7 @@ async fn logging_in_again_replaces_the_other_place() {
         .await
         .unwrap();
     assert!(world.credentials_file.exists());
-    let report = world
+    world
         .profile("local", &["--with-token"], &piped(), &Env::default())
         .await
         .unwrap();
@@ -1150,7 +1166,7 @@ async fn logging_in_again_replaces_the_other_place() {
     );
     assert!(world.keyring.text("local").is_some());
     assert_eq!(world.set().iter().count(), 1);
-    assert_eq!(report.value["storage"], "keyring");
+    assert_eq!(world.storage("local"), "keyring");
 }
 
 // --- the server of a new profile ---------------------------------------------
@@ -1175,7 +1191,7 @@ async fn a_known_name_without_a_terminal_or_a_url_takes_its_suggestion_and_says_
             format!("using {url} for profile {profile}")
         )));
         // No login was asked for, so no request was made and the profile says so.
-        assert_eq!(report.value["keyId"], Value::Null);
+        assert_eq!(report.value["account"], Value::Null);
         assert!(
             report
                 .messages
@@ -1228,7 +1244,7 @@ async fn at_a_terminal_a_known_name_suggests_its_url_and_enter_accepts_it() {
         terminal.questions(),
         ["No login for profile staging (https://staging.carbonaltdelete.eu). Log in now?"]
     );
-    assert_eq!(report.value["keyId"], Value::Null);
+    assert_eq!(report.value["account"], Value::Null);
     assert!(
         report
             .messages
@@ -1282,7 +1298,7 @@ async fn a_new_profile_at_a_terminal_that_wants_a_login_logs_in_when_the_questio
             world.origin
         )]
     );
-    assert_eq!(report.value["email"], EMAIL);
+    assert_eq!(report.value["account"], EMAIL);
 }
 
 #[tokio::test]
@@ -1377,7 +1393,7 @@ async fn switching_to_a_logged_in_profile_makes_no_request_and_does_not_read_the
     assert_eq!(terminal.questions(), Vec::<String>::new());
     assert_eq!(world.set().active(), Some(&name("local")));
     assert_eq!(report.value["previous"], "staging");
-    assert_eq!(report.value["email"], EMAIL);
+    assert_eq!(report.value["account"], EMAIL);
     assert_eq!(
         report.messages.last().unwrap().1,
         format!(
@@ -1488,7 +1504,6 @@ async fn cad_profile_overrides_the_switch_in_this_shell_and_says_so() {
         .await
         .unwrap();
     assert_eq!(report.value["active"], true);
-    assert_eq!(report.value["selected"], false);
     let last = report.messages.last().unwrap();
     assert_eq!(last.0, StatusKind::Warning);
     assert!(last.1.contains("CAD_PROFILE is set to local"), "{last:?}");
@@ -1538,7 +1553,7 @@ async fn without_profiles_use_lists_nothing_and_says_how_to_start() {
 }
 
 #[tokio::test]
-async fn use_lists_the_profiles_sorted_with_their_login_metadata_and_never_connects() {
+async fn use_lists_the_profiles_sorted_with_their_account_and_company_and_never_connects() {
     let world = world().await;
     world
         .profile(
@@ -1569,16 +1584,7 @@ async fn use_lists_the_profiles_sorted_with_their_login_metadata_and_never_conne
     assert_eq!(rows[0]["name"], "dev");
     assert_eq!(rows[1]["name"], "local");
     assert_eq!(rows[0]["active"], true);
-    assert_eq!(rows[0]["selected"], true);
-    for field in [
-        "email",
-        "userId",
-        "keyId",
-        "storage",
-        "storedAt",
-        "companyId",
-        "companyName",
-    ] {
+    for field in ["account", "companyId", "companyName"] {
         assert_eq!(
             rows[0][field],
             Value::Null,
@@ -1586,7 +1592,6 @@ async fn use_lists_the_profiles_sorted_with_their_login_metadata_and_never_conne
         );
     }
     assert_eq!(rows[1]["active"], false);
-    assert_eq!(rows[1]["selected"], false);
     let mut keys: Vec<_> = rows[1]
         .as_object()
         .unwrap()
@@ -1597,26 +1602,17 @@ async fn use_lists_the_profiles_sorted_with_their_login_metadata_and_never_conne
     assert_eq!(
         keys,
         [
+            "account",
             "active",
             "companyId",
             "companyName",
-            "email",
-            "keyId",
             "name",
-            "selected",
-            "storage",
-            "storedAt",
-            "url",
-            "userId"
+            "url"
         ]
     );
     assert_eq!(rows[1]["companyId"], COMPANY_ID);
     assert_eq!(rows[1]["companyName"], "Acme GmbH");
-    assert_eq!(rows[1]["keyId"], KEY_ID);
-    assert_eq!(rows[1]["userId"], USER_ID);
-    assert_eq!(rows[1]["email"], EMAIL);
-    assert_eq!(rows[1]["storage"], "file");
-    assert!(rows[1]["storedAt"].as_str().unwrap().ends_with('Z'));
+    assert_eq!(rows[1]["account"], EMAIL);
     assert!(!shown(&report).contains(SECRET));
     assert_eq!(
         report.messages,
@@ -1628,7 +1624,7 @@ async fn use_lists_the_profiles_sorted_with_their_login_metadata_and_never_conne
 }
 
 #[tokio::test]
-async fn selected_follows_what_a_command_would_use_and_differs_from_active() {
+async fn the_status_line_names_the_profile_in_use_and_why_whatever_is_active() {
     let world = world().await;
     for profile in ["staging", "dev"] {
         world
@@ -1640,7 +1636,7 @@ async fn selected_follows_what_a_command_would_use_and_differs_from_active() {
             .await
             .unwrap();
     }
-    let selected = |report: &Report| -> Vec<(String, bool, bool)> {
+    let active = |report: &Report| -> Vec<(String, bool)> {
         report
             .value
             .as_array()
@@ -1650,7 +1646,6 @@ async fn selected_follows_what_a_command_would_use_and_differs_from_active() {
                 (
                     row["name"].as_str().unwrap().to_owned(),
                     row["active"].as_bool().unwrap(),
-                    row["selected"].as_bool().unwrap(),
                 )
             })
             .collect()
@@ -1665,8 +1660,8 @@ async fn selected_follows_what_a_command_would_use_and_differs_from_active() {
         .await
         .unwrap();
     assert_eq!(
-        selected(&report),
-        [("dev".into(), true, false), ("staging".into(), false, true)]
+        active(&report),
+        [("dev".into(), true), ("staging".into(), false)]
     );
     assert_eq!(
         report.messages[0].1,
@@ -1682,8 +1677,8 @@ async fn selected_follows_what_a_command_would_use_and_differs_from_active() {
         .await
         .unwrap();
     assert_eq!(
-        selected(&report),
-        [("dev".into(), true, false), ("staging".into(), false, true)]
+        active(&report),
+        [("dev".into(), true), ("staging".into(), false)]
     );
     assert_eq!(
         report.messages[0].1,
@@ -1699,8 +1694,8 @@ async fn selected_follows_what_a_command_would_use_and_differs_from_active() {
         .await
         .unwrap();
     assert_eq!(
-        selected(&report),
-        [("dev".into(), true, false), ("staging".into(), false, true)]
+        active(&report),
+        [("dev".into(), true), ("staging".into(), false)]
     );
     assert_eq!(
         report.messages[0].1,
@@ -1734,12 +1729,9 @@ async fn a_server_no_profile_has_selects_none_and_an_unknown_profile_is_an_error
         .as_array()
         .unwrap()
         .iter()
-        .map(|row| (row["active"].as_bool(), row["selected"].as_bool()))
+        .map(|row| row["active"].as_bool())
         .collect();
-    assert_eq!(
-        flags,
-        [(Some(true), Some(false)), (Some(false), Some(false))]
-    );
+    assert_eq!(flags, [Some(true), Some(false)]);
     assert!(report.messages[0].1.contains("no profile is selected"));
 
     let error = world
@@ -1757,7 +1749,7 @@ async fn a_server_no_profile_has_selects_none_and_an_unknown_profile_is_an_error
 }
 
 #[tokio::test]
-async fn the_rows_are_flat_with_the_account_in_plain_columns_for_every_format() {
+async fn the_rows_are_flat_with_the_account_in_one_column_for_every_format() {
     let world = world().await;
     world
         .profile(
@@ -1778,7 +1770,7 @@ async fn the_rows_are_flat_with_the_account_in_plain_columns_for_every_format() 
             )
             .await
             .unwrap();
-        assert_eq!(report.value[0]["email"], EMAIL, "{output}");
+        assert_eq!(report.value[0]["account"], EMAIL, "{output}");
         assert!(
             report.value[0]
                 .as_object()
@@ -1790,7 +1782,7 @@ async fn the_rows_are_flat_with_the_account_in_plain_columns_for_every_format() 
         );
     }
 
-    // Without an e-mail the user ID is still a column of its own.
+    // Without an e-mail the account is the user ID.
     let mut set = world.set();
     let mut profile = set.get(&name("local")).unwrap().clone();
     profile.login.as_mut().unwrap().email = None;
@@ -1800,8 +1792,7 @@ async fn the_rows_are_flat_with_the_account_in_plain_columns_for_every_format() 
         .run(&["use"], &Scripted::default(), &Env::default())
         .await
         .unwrap();
-    assert_eq!(report.value[0]["email"], Value::Null);
-    assert_eq!(report.value[0]["userId"], USER_ID);
+    assert_eq!(report.value[0]["account"], USER_ID);
 
     // The switch is the row with `previous` beside it, not a nested object.
     let report = world
@@ -1813,7 +1804,7 @@ async fn the_rows_are_flat_with_the_account_in_plain_columns_for_every_format() 
         .await
         .unwrap();
     assert_eq!(report.value["name"], "local");
-    assert_eq!(report.value["userId"], USER_ID);
+    assert_eq!(report.value["account"], USER_ID);
     assert_eq!(report.value["previous"], "local");
     assert!(
         report
@@ -1823,6 +1814,133 @@ async fn the_rows_are_flat_with_the_account_in_plain_columns_for_every_format() 
             .1
             .contains(&format!("as {USER_ID}"))
     );
+}
+
+#[tokio::test]
+async fn the_json_of_use_has_exactly_the_six_keys_with_the_email_as_the_account() {
+    let world = world().await;
+    world
+        .profile(
+            "local",
+            &["--with-token", "--insecure-storage"],
+            &Scripted::piped(&token()),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+
+    let report = world
+        .run(
+            &["--output", "json", "use"],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+    let row = report.value[0].as_object().unwrap();
+    let mut keys: Vec<_> = row.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        [
+            "account",
+            "active",
+            "companyId",
+            "companyName",
+            "name",
+            "url"
+        ]
+    );
+    assert_eq!(row["account"], EMAIL);
+}
+
+#[tokio::test]
+async fn the_account_is_the_user_id_when_the_login_has_no_email() {
+    let world = world().await;
+    world
+        .profile(
+            "local",
+            &["--with-token", "--insecure-storage"],
+            &Scripted::piped(&token()),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+    let mut set = world.set();
+    let mut profile = set.get(&name("local")).unwrap().clone();
+    profile.login.as_mut().unwrap().email = None;
+    set.insert(name("local"), profile);
+    world.profiles.save(&set).unwrap();
+
+    let report = world
+        .run(
+            &["--output", "json", "use"],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(report.value[0]["account"], USER_ID);
+}
+
+#[tokio::test]
+async fn the_account_is_null_for_a_profile_with_no_login() {
+    let world = world().await;
+    world
+        .run(
+            &["use", "profile", "staging"],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+
+    let report = world
+        .run(
+            &["--output", "json", "use"],
+            &Scripted::default(),
+            &Env::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(report.value[0]["name"], "staging");
+    assert_eq!(report.value[0]["account"], Value::Null);
+}
+
+#[tokio::test]
+async fn the_status_line_says_which_profile_is_in_use_and_why_when_cad_profile_is_not_the_active_one()
+ {
+    let world = world().await;
+    for profile in ["staging", "dev"] {
+        world
+            .run(
+                &["use", "profile", profile],
+                &Scripted::default(),
+                &Env::default(),
+            )
+            .await
+            .unwrap();
+    }
+
+    let report = world
+        .run(
+            &["--output", "json", "use"],
+            &Scripted::default(),
+            &Env::default().with("CAD_PROFILE", "staging"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        report.messages,
+        [(
+            StatusKind::Info,
+            "using profile staging (selected by CAD_PROFILE)".to_owned()
+        )]
+    );
+    // The rows say which profile is active, not which one is in use.
+    assert_eq!(report.value[0]["name"], "dev");
+    assert_eq!(report.value[0]["active"], true);
+    assert!(report.value[1].get("selected").is_none());
 }
 
 // --- forgetting --------------------------------------------------------------
@@ -2844,7 +2962,7 @@ async fn giving_up_the_menu_leaves_the_company_unset_with_the_hint_and_the_login
         report.messages[1],
         (StatusKind::Warning, NO_COMPANY_HINT.to_owned())
     );
-    assert_eq!(report.value["email"], EMAIL, "the login was kept");
+    assert_eq!(report.value["account"], EMAIL, "the login was kept");
     assert!(world.stored());
 }
 
