@@ -56,7 +56,7 @@ const MAX_REDIRECTS: usize = 5;
 // endless stream. Each cap is far above what a release actually contains.
 
 /// Largest release archive downloaded. A release archive holds one stripped
-/// binary plus README and LICENSE, a few MiB today.
+/// binary plus README and the licenses, a few MiB today.
 pub(crate) const MAX_ARCHIVE_BYTES: u64 = 100 * 1024 * 1024;
 /// Largest `SHA256SUMS` downloaded: one ~100-byte line per archive, six today.
 pub(crate) const MAX_SUMS_BYTES: u64 = 64 * 1024;

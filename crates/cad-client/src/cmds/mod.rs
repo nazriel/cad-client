@@ -5,7 +5,6 @@ pub mod activity_group;
 pub mod benchmark;
 pub mod company;
 pub mod company_template;
-pub mod context;
 pub mod custom_field;
 pub mod custom_option;
 pub mod document;
@@ -16,6 +15,7 @@ pub mod report;
 pub mod reporting_period;
 pub mod schema;
 pub mod update;
+pub mod r#use;
 
 use std::time::Duration;
 
@@ -56,14 +56,27 @@ const MAN_EXAMPLES: &[Example] = &[Example::new(
 /// Top-level `cad-cli` command.
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Show and switch the active profile, log in, and choose the company.
+    ///
+    /// Without a subcommand it lists the profiles, sorted by name, one row
+    /// each: `name`, `url`, `active`, `account` (who the login is for: the
+    /// e-mail, else the user ID, empty without a login), `companyId` and
+    /// `companyName`. `active` marks the profile `use profile` last switched
+    /// to. The line on stderr names the profile commands use now and why;
+    /// it differs from the active one when `--profile`, `CAD_PROFILE` or a
+    /// server given with `--server-url` or `CAD_SERVER_URL` picks another. It
+    /// makes no request.
+    ///
+    /// `use profile <name>` creates, switches to, logs in to and forgets a
+    /// profile. `use company <name|id>` chooses the company the profile acts
+    /// on, and `use --check` shows, with the server, what a command would use.
+    Use(r#use::Group),
     /// Manage the company's activity categories.
     ActivityCategory(activity_category::Group),
     /// Manage the company's activity groups.
     ActivityGroup(activity_group::Group),
     /// Read and update the company benchmark.
     Benchmark(benchmark::Group),
-    /// Show the authenticated session context.
-    Context(context::Group),
     /// Inspect and create companies available to the current API key.
     Company(company::Group),
     /// Inspect reusable company templates available to the current API key.
@@ -125,7 +138,6 @@ impl Command {
             }
             Self::ActivityGroup(group) => Invocation::Online(OnlineCommand::ActivityGroup(group)),
             Self::Benchmark(group) => Invocation::Online(OnlineCommand::Benchmark(group)),
-            Self::Context(group) => Invocation::Online(OnlineCommand::Context(group)),
             Self::Company(group) => Invocation::Online(OnlineCommand::Company(group)),
             Self::CompanyTemplate(group) => {
                 Invocation::Online(OnlineCommand::CompanyTemplate(group))
@@ -145,6 +157,7 @@ impl Command {
             Self::Completions(args) => Invocation::Offline(OfflineCommand::Completions(args)),
             Self::Man => Invocation::Offline(OfflineCommand::Man),
             Self::Update(args) => Invocation::Standalone(StandaloneCommand::Update(args)),
+            Self::Use(group) => Invocation::Use(group),
         }
     }
 }
@@ -160,6 +173,9 @@ pub(crate) enum Invocation {
     /// Needs neither the platform nor its configuration, but returns data in
     /// the selected output format like an online command.
     Standalone(StandaloneCommand),
+    /// Manages the profiles and their stored logins: it must not resolve
+    /// credentials the way an online command does.
+    Use(r#use::Group),
     Online(OnlineCommand),
 }
 
@@ -209,7 +225,6 @@ pub(crate) enum OnlineCommand {
     ActivityCategory(activity_category::Group),
     ActivityGroup(activity_group::Group),
     Benchmark(benchmark::Group),
-    Context(context::Group),
     Company(company::Group),
     CompanyTemplate(company_template::Group),
     ReportingPeriod(reporting_period::Group),
@@ -222,45 +237,38 @@ pub(crate) enum OnlineCommand {
 }
 
 impl OnlineCommand {
+    /// Whether the command acts on a company, and so is refused when none is
+    /// selected. The session-level groups work on whatever the key can reach.
+    pub(crate) const fn needs_company(&self) -> bool {
+        !matches!(self, Self::Company(_) | Self::CompanyTemplate(_))
+    }
+
     pub(crate) async fn run(
         self,
         context: &CommandContext<'_>,
         platform: &Platform,
     ) -> Result<Value, CliError> {
         match self {
-            Self::ActivityCategory(group) => {
-                group.run(context, platform.scoped().await?.client()).await
-            }
-            Self::ActivityGroup(group) => {
-                group.run(context, platform.scoped().await?.client()).await
-            }
-            Self::Benchmark(group) => group.run(context, platform.scoped().await?.client()).await,
+            Self::ActivityCategory(group) => group.run(context, platform.scoped()?.client()).await,
+            Self::ActivityGroup(group) => group.run(context, platform.scoped()?.client()).await,
+            Self::Benchmark(group) => group.run(context, platform.scoped()?.client()).await,
             // Session-level commands neither prompt nor read local input, so
             // they ignore the [`CommandContext`].
-            Self::Context(group) => {
-                group
-                    .run(platform.connected(), platform.requested_company_id())
-                    .await
-            }
             Self::Company(group) => group.run(context, platform.connected()).await,
             Self::CompanyTemplate(group) => group.run(platform.connected()).await,
-            Self::ReportingPeriod(group) => group.run(context, &platform.scoped().await?).await,
-            Self::InventoryLine(group) => {
-                group.run(context, platform.scoped().await?.client()).await
-            }
+            Self::ReportingPeriod(group) => group.run(context, &platform.scoped()?).await,
+            Self::InventoryLine(group) => group.run(context, platform.scoped()?.client()).await,
             Self::OrganizationalUnit(group) => {
-                group.run(context, platform.scoped().await?.client()).await
+                group.run(context, platform.scoped()?.client()).await
             }
             Self::Document(group) => {
-                let sdk = platform.scoped().await?;
+                let sdk = platform.scoped()?;
                 let company_id = sdk.company_id();
                 group.run(context, &sdk, company_id).await
             }
-            Self::CustomField(group) => group.run(context, platform.scoped().await?.client()).await,
-            Self::CustomOption(group) => {
-                group.run(context, platform.scoped().await?.client()).await
-            }
-            Self::Report(group) => group.run(context, &platform.scoped().await?).await,
+            Self::CustomField(group) => group.run(context, platform.scoped()?.client()).await,
+            Self::CustomOption(group) => group.run(context, platform.scoped()?.client()).await,
+            Self::Report(group) => group.run(context, &platform.scoped()?).await,
         }
     }
 }

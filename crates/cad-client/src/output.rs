@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::io::{IsTerminal, Write};
 
@@ -7,7 +8,7 @@ use serde_json::{Map, Value};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::cli::OutputFormat;
-use crate::error::CliError;
+use crate::error::{CliError, ErrorKind};
 
 /// Longest cell body rendered before it is shortened.
 const MAX_CELL_WIDTH: usize = 45;
@@ -92,6 +93,48 @@ pub(crate) fn write_styled<T: Serialize>(
         OutputFormat::Jsonl => write_jsonl(&value, destination)?,
         OutputFormat::Table => write_table(&value, destination, style)?,
     }
+    Ok(())
+}
+
+/// The failure as `--output json` and `jsonl` report it on stderr.
+#[derive(Serialize)]
+struct ErrorReport<'a> {
+    error: ErrorBody<'a>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ErrorBody<'a> {
+    kind: ErrorKind,
+    message: Cow<'a, str>,
+    /// How to fix the failure, when the error says so.
+    hint: Option<&'a str>,
+    exit_code: u8,
+    /// The HTTP status, when the platform rejected a request.
+    status: Option<u16>,
+    /// The error body the platform sent, if it sent one.
+    details: Option<&'a Value>,
+}
+
+/// Writes `error` as one line of JSON, the form a program reads on stderr.
+///
+/// # Errors
+///
+/// Returns [`CliError`] when serialization or writing fails.
+pub(crate) fn write_error(error: &CliError, destination: &mut dyn Write) -> Result<(), CliError> {
+    let report = ErrorReport {
+        error: ErrorBody {
+            kind: error.kind(),
+            message: error.message(),
+            hint: error.hint(),
+            exit_code: error.exit_status(),
+            status: error.status(),
+            details: error.details(),
+        },
+    };
+    serde_json::to_writer(&mut *destination, &report)
+        .map_err(|error| CliError::Io(std::io::Error::other(error)))?;
+    writeln!(destination)?;
     Ok(())
 }
 
@@ -226,6 +269,69 @@ mod tests {
         let mut bytes = Vec::new();
         write_styled(value, format, &mut bytes, style).expect("rendering succeeds");
         String::from_utf8(bytes).expect("output is UTF-8")
+    }
+
+    fn error_json(error: &CliError) -> Value {
+        let mut bytes = Vec::new();
+        write_error(error, &mut bytes).expect("writing succeeds");
+        let text = String::from_utf8(bytes).expect("output is UTF-8");
+        assert_eq!(text.lines().count(), 1, "{text}");
+        assert!(text.ends_with('\n'));
+        serde_json::from_str(&text).expect("one JSON object")
+    }
+
+    #[test]
+    fn a_hinted_error_keeps_its_message_and_hint_apart() {
+        assert_eq!(
+            error_json(&CliError::config_with_hint(
+                "no profile is selected",
+                "run `cad-cli use profile <name>`"
+            )),
+            serde_json::json!({"error": {
+                "kind": "config",
+                "message": "no profile is selected",
+                "hint": "run `cad-cli use profile <name>`",
+                "exitCode": 2,
+                "status": null,
+                "details": null
+            }})
+        );
+    }
+
+    #[test]
+    fn an_api_error_carries_its_status_and_details() {
+        let error = CliError::from(cad_api::Error::Api {
+            status: 403,
+            message: "forbidden".to_owned(),
+            details: Some(serde_json::json!({"msg": "not your company"})),
+        });
+        assert_eq!(
+            error_json(&error),
+            serde_json::json!({"error": {
+                "kind": "api",
+                "message": "HTTP 403: forbidden",
+                "hint": null,
+                "exitCode": 4,
+                "status": 403,
+                "details": {"msg": "not your company"}
+            }})
+        );
+    }
+
+    #[test]
+    fn an_io_error_has_no_hint_status_or_details() {
+        let error = CliError::Io(std::io::Error::other("disk full"));
+        assert_eq!(
+            error_json(&error),
+            serde_json::json!({"error": {
+                "kind": "io",
+                "message": "disk full",
+                "hint": null,
+                "exitCode": 5,
+                "status": null,
+                "details": null
+            }})
+        );
     }
 
     #[test]

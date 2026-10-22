@@ -14,7 +14,17 @@ target_args=()
 for target in "${targets[@]}"; do
   target_args+=(--target "$target")
 done
+# GCC on aarch64 turns libdbus's atomics into calls to libgcc's outline
+# helpers (__aarch64_ldadd4_sync), which a static musl link does not pull in;
+# compile them inline instead.
+export CFLAGS_aarch64_unknown_linux_musl="${CFLAGS_aarch64_unknown_linux_musl:+$CFLAGS_aarch64_unknown_linux_musl }-mno-outline-atomics"
 cargo build --release --locked -p cad-client --bin cad-cli "${target_args[@]}"
+
+# Linux builds link libdbus statically for the system keyring; its license
+# (AFL-2.1 or GPL-2.0-or-later, see deny.toml) travels with the binary.
+dbus_license="$(cargo metadata --format-version 1 --locked |
+  jq -r '.packages[] | select(.name == "libdbus-sys") | .manifest_path' |
+  xargs dirname)/vendor/dbus/COPYING"
 
 for target in "${targets[@]}"; do
   archive="cad-cli-v${version}-${target}"
@@ -23,6 +33,9 @@ for target in "${targets[@]}"; do
   rm -rf "dist/${archive}" "dist/${archive}".{tar.gz,zip}
   mkdir -p "dist/${archive}"
   cp "target/${target}/release/cad-cli${exe}" README.md LICENSE "dist/${archive}/"
+  if [[ "$target" == *-linux-* ]]; then
+    cp "$dbus_license" "dist/${archive}/LICENSE-dbus"
+  fi
   if [[ -n "$exe" ]]; then
     (cd dist && 7z a -tzip -bso0 -bsp0 "${archive}.zip" "${archive}")
     echo "dist/${archive}.zip"

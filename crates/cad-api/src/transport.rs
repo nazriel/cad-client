@@ -47,15 +47,22 @@ impl Transport {
     pub(crate) async fn identity(
         &self,
         credentials: &ApiKeyV2Credentials,
+        company_id: Option<CompanyId>,
     ) -> Result<SessionContext> {
         let response = self
-            .request_from_spec(machine_identity(), credentials, None)?
+            .request_from_spec(machine_identity(), credentials, company_id)?
             .send()
             .await
             .map_err(Error::transport)?;
-        let context: SessionContext = decode_json_response(response)
-            .await
-            .map_err(Error::classify_auth)?;
+        let context: SessionContext = decode_json_response(response).await.map_err(|error| {
+            // Without a company every client error is about the key. With one,
+            // only a 401 is: other statuses may concern the company.
+            if company_id.is_some() {
+                error.classify_unauthorized()
+            } else {
+                error.classify_auth()
+            }
+        })?;
         tracing::debug!(
             resolved_company_id = ?context.company_selection.resolved_company_id,
             company_selection_source = ?context.company_selection.source,
@@ -137,6 +144,15 @@ impl ClientCore {
             credentials: Arc::clone(&self.credentials),
             company_id: Some(company_id),
             context,
+        }
+    }
+
+    pub(crate) fn without_company(&self) -> Self {
+        Self {
+            transport: Arc::clone(&self.transport),
+            credentials: Arc::clone(&self.credentials),
+            company_id: None,
+            context: self.context.clone(),
         }
     }
 

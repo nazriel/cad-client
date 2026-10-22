@@ -1,6 +1,7 @@
 use std::io::{IsTerminal, Read, Write};
 use std::time::Duration;
 
+use secrecy::SecretString;
 use serde_json::Value;
 
 use crate::cli::OutputFormat;
@@ -45,6 +46,13 @@ impl StatusKind {
 /// the Ctrl-C arm of a `tokio::select!` — cannot leave a spinner on the screen.
 pub(crate) trait Progress: Send {}
 
+/// Says whether a typed value is acceptable: `Err` holds the reason, shown to
+/// the person before they type again.
+pub(crate) type Validator = fn(&str) -> Result<(), String>;
+
+/// How many options a list shows at once.
+const SELECT_PAGE_SIZE: usize = 10;
+
 /// Process I/O used by command handlers.
 pub(crate) trait Terminal: Send + Sync {
     /// Writes a user-facing status message to stderr.
@@ -60,6 +68,43 @@ pub(crate) trait Terminal: Send + Sync {
 
     /// Reads all bytes from the process standard input.
     fn read_stdin(&self) -> Result<Vec<u8>, CliError>;
+
+    /// Whether a person can answer a prompt: standard input and standard
+    /// error are both terminals.
+    fn is_interactive(&self) -> bool;
+
+    /// Asks for one line of text on stderr, with the typed text shown. A
+    /// value `validate` rejects is not returned: the reason is shown and the
+    /// question stays open until the value is valid.
+    ///
+    /// # Errors
+    ///
+    /// [`CliError::Cancelled`] when the person gives up with Esc or Ctrl-C.
+    fn prompt(&self, label: &str, validate: Validator) -> Result<String, CliError>;
+
+    /// Asks for one line of text on stderr, with each typed character masked
+    /// by `*`. Validated as [`Terminal::prompt`] is.
+    ///
+    /// # Errors
+    ///
+    /// [`CliError::Cancelled`] when the person gives up with Esc or Ctrl-C.
+    fn prompt_secret(&self, label: &str, validate: Validator) -> Result<SecretString, CliError>;
+
+    /// Asks a yes/no question on stderr; only an explicit yes is a yes. Unlike
+    /// [`Terminal::confirm`], `--yes` does not answer it.
+    fn ask(&self, question: &str) -> Result<bool, CliError>;
+
+    /// Asks the person to pick one of `options` and returns its index, with
+    /// the cursor on `start`. Typing filters the list, fuzzily.
+    ///
+    /// # Errors
+    ///
+    /// [`CliError::Cancelled`] when the person gives up with Esc or Ctrl-C.
+    fn select(&self, label: &str, options: &[String], start: usize) -> Result<usize, CliError>;
+
+    /// Opens `url` in the user's browser. Returns whether a browser was
+    /// started: on a machine with no display there is none to start.
+    fn open_url(&self, url: &str) -> bool;
 
     /// Writes command data to stdout in the selected presentation format.
     fn write_output(&self, value: &Value, format: OutputFormat) -> Result<(), CliError>;
@@ -138,6 +183,63 @@ impl Terminal for ProcessTerminal {
         Ok(bytes)
     }
 
+    fn is_interactive(&self) -> bool {
+        std::io::stdin().is_terminal() && std::io::stderr().is_terminal()
+    }
+
+    fn prompt(&self, label: &str, validate: Validator) -> Result<String, CliError> {
+        inquire::Text::new(label)
+            .with_validator(inquire_validator(validate))
+            .prompt()
+            .map_err(prompt_error)
+    }
+
+    fn prompt_secret(&self, label: &str, validate: Validator) -> Result<SecretString, CliError> {
+        inquire::Password::new(label)
+            .with_display_mode(inquire::PasswordDisplayMode::Masked)
+            .without_confirmation()
+            .with_validator(inquire_validator(validate))
+            .prompt()
+            .map(SecretString::from)
+            .map_err(prompt_error)
+    }
+
+    fn ask(&self, question: &str) -> Result<bool, CliError> {
+        inquire::Confirm::new(question)
+            .with_default(false)
+            .prompt()
+            .map_err(prompt_error)
+    }
+
+    fn select(&self, label: &str, options: &[String], start: usize) -> Result<usize, CliError> {
+        inquire::Select::new(label, options.to_vec())
+            .with_page_size(SELECT_PAGE_SIZE)
+            .with_starting_cursor(start)
+            .raw_prompt()
+            .map(|chosen| chosen.index)
+            .map_err(prompt_error)
+    }
+
+    fn open_url(&self, url: &str) -> bool {
+        let Some(mut command) = browser_command(url, |name| {
+            std::env::var_os(name).is_some_and(|value| !value.is_empty())
+        }) else {
+            return false;
+        };
+        let Ok(mut child) = command
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        else {
+            return false;
+        };
+        // Some openers stay in the foreground for as long as the browser runs,
+        // so nothing waits for it here; a thread reaps it whenever it ends.
+        std::thread::spawn(move || child.wait());
+        true
+    }
+
     fn write_output(&self, value: &Value, format: OutputFormat) -> Result<(), CliError> {
         let stdout = std::io::stdout();
         crate::output::write_styled(value, format, &mut stdout.lock(), TableStyle::detect())
@@ -159,6 +261,60 @@ impl Terminal for ProcessTerminal {
         let _ = self.status(StatusKind::Info, message);
         Box::new(SilentProgress)
     }
+}
+
+/// `validate` as a validator `inquire` accepts: the reason becomes the message
+/// shown under the field.
+fn inquire_validator(
+    validate: Validator,
+) -> impl Fn(&str) -> Result<inquire::validator::Validation, inquire::CustomUserError> + Clone {
+    use inquire::validator::Validation;
+
+    move |text| {
+        Ok(match validate(text) {
+            Ok(()) => Validation::Valid,
+            Err(reason) => Validation::Invalid(reason.into()),
+        })
+    }
+}
+
+/// Esc and Ctrl-C cancel the command, as Ctrl-C does elsewhere.
+///
+/// With the `console` backend, Ctrl-C reaches the process as SIGINT, which
+/// ends it unless a handler is installed; a handler that turns it into a read
+/// error of kind `Interrupted` is a cancellation too.
+fn prompt_error(error: inquire::InquireError) -> CliError {
+    use inquire::InquireError;
+
+    match error {
+        InquireError::OperationCanceled | InquireError::OperationInterrupted => CliError::Cancelled,
+        InquireError::IO(error) if error.kind() == std::io::ErrorKind::Interrupted => {
+            CliError::Cancelled
+        }
+        InquireError::IO(error) => CliError::Io(error),
+        InquireError::NotTTY => CliError::Input("no terminal to ask on".to_owned()),
+        other => CliError::Input(other.to_string()),
+    }
+}
+
+/// The command that opens `url` in a browser on this platform, or `None`
+/// where there is none to open: Linux without a display. `is_set` says
+/// whether an environment variable is set and not empty.
+fn browser_command(url: &str, is_set: impl Fn(&str) -> bool) -> Option<std::process::Command> {
+    let mut command = match std::env::consts::OS {
+        "macos" => std::process::Command::new("open"),
+        "windows" => {
+            let mut command = std::process::Command::new("cmd");
+            command.args(["/C", "start", ""]);
+            command
+        }
+        _ if is_set("DISPLAY") || is_set("WAYLAND_DISPLAY") => {
+            std::process::Command::new("xdg-open")
+        }
+        _ => return None,
+    };
+    command.arg(url);
+    Some(command)
 }
 
 /// Indicator for streams that cannot be redrawn.
@@ -223,6 +379,30 @@ impl Terminal for SilentTerminal {
         Ok(Vec::new())
     }
 
+    fn is_interactive(&self) -> bool {
+        false
+    }
+
+    fn prompt(&self, _label: &str, _validate: Validator) -> Result<String, CliError> {
+        Err(CliError::Input("no terminal to ask on".to_owned()))
+    }
+
+    fn prompt_secret(&self, _label: &str, _validate: Validator) -> Result<SecretString, CliError> {
+        Err(CliError::Input("no terminal to ask on".to_owned()))
+    }
+
+    fn ask(&self, _question: &str) -> Result<bool, CliError> {
+        Ok(false)
+    }
+
+    fn select(&self, _label: &str, _options: &[String], _start: usize) -> Result<usize, CliError> {
+        Err(CliError::Input("no terminal to ask on".to_owned()))
+    }
+
+    fn open_url(&self, _url: &str) -> bool {
+        false
+    }
+
     fn write_output(&self, _value: &Value, _format: OutputFormat) -> Result<(), CliError> {
         Ok(())
     }
@@ -233,5 +413,72 @@ impl Terminal for SilentTerminal {
 
     fn progress(&self, _message: &str) -> Box<dyn Progress> {
         Box::new(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::process::Command;
+
+    use super::{browser_command, prompt_error};
+    use crate::error::CliError;
+
+    fn arguments(command: &Command) -> Vec<String> {
+        command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn giving_up_on_a_prompt_cancels_the_command() {
+        use inquire::InquireError;
+
+        for error in [
+            InquireError::OperationCanceled,
+            InquireError::OperationInterrupted,
+            InquireError::IO(std::io::ErrorKind::Interrupted.into()),
+        ] {
+            assert!(matches!(prompt_error(error), CliError::Cancelled));
+        }
+        assert!(matches!(
+            prompt_error(InquireError::IO(std::io::ErrorKind::BrokenPipe.into())),
+            CliError::Io(_)
+        ));
+        assert!(matches!(
+            prompt_error(InquireError::NotTTY),
+            CliError::Input(_)
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_opens_a_browser_only_with_a_display() {
+        let url = "https://example.test/app";
+        assert!(browser_command(url, |_| false).is_none());
+        for variable in ["DISPLAY", "WAYLAND_DISPLAY"] {
+            let command = browser_command(url, |name| name == variable).expect("a display");
+            assert_eq!(command.get_program(), "xdg-open");
+            assert_eq!(arguments(&command), [url]);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_always_has_a_browser() {
+        let command = browser_command("https://example.test/", |_| false).expect("open");
+        assert_eq!(command.get_program(), "open");
+        assert_eq!(arguments(&command), ["https://example.test/"]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_starts_the_default_browser() {
+        let command = browser_command("https://example.test/", |_| false).expect("start");
+        assert_eq!(command.get_program(), "cmd");
+        assert_eq!(
+            arguments(&command),
+            ["/C", "start", "", "https://example.test/"]
+        );
     }
 }

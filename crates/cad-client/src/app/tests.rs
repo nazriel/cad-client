@@ -5,7 +5,7 @@
 //! These stay beside the code because they drive the private `execute()` seam
 //! with fakes. Black-box coverage of the shipped binary lives in `tests/cli.rs`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::Write;
 use std::sync::Mutex;
 
@@ -19,7 +19,9 @@ use crate::cli::OutputFormat;
 use crate::config::Environment;
 use crate::error::CliError;
 use crate::output::TableStyle;
-use crate::support::terminal::{Progress, StatusKind, Terminal};
+use crate::support::credentials::memory::empty_store;
+use crate::support::profiles::{Profile, ProfileName, ProfileSet, ProfileStore};
+use crate::support::terminal::{Progress, StatusKind, Terminal, Validator};
 
 const COMPANY_ID: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0042);
 const IDENTITY_PATH: &str = "/api/auth/v2/machine/identity";
@@ -44,6 +46,8 @@ fn credentials() -> FakeEnvironment {
     FakeEnvironment(HashMap::from([
         ("CAD_API_KEY".into(), Uuid::nil().to_string()),
         ("CAD_API_SECRET".into(), "secret".into()),
+        // A command that acts on a company is refused without one.
+        ("CAD_COMPANY_ID".into(), COMPANY_ID.to_string()),
     ]))
 }
 
@@ -56,6 +60,10 @@ struct FakeTerminal {
     progress: Mutex<Vec<String>>,
     confirmations: Mutex<Vec<String>>,
     interactive: bool,
+    /// The indexes a person picks in `select`, in order.
+    picks: Mutex<VecDeque<usize>>,
+    /// What `select` showed: the label, the options, and where the cursor was.
+    menus: Mutex<Vec<(String, Vec<String>, usize)>>,
 }
 
 impl FakeTerminal {
@@ -73,6 +81,19 @@ impl FakeTerminal {
             .lock()
             .expect("confirmation lock")
             .clone()
+    }
+
+    /// A terminal whose person picks `indexes` from the lists, in order.
+    fn picking(indexes: &[usize]) -> Self {
+        Self {
+            interactive: true,
+            picks: Mutex::new(indexes.iter().copied().collect()),
+            ..Self::default()
+        }
+    }
+
+    fn menus(&self) -> Vec<(String, Vec<String>, usize)> {
+        self.menus.lock().expect("menus lock").clone()
     }
 }
 
@@ -116,6 +137,46 @@ impl Terminal for FakeTerminal {
 
     fn read_stdin(&self) -> Result<Vec<u8>, CliError> {
         Ok(Vec::new())
+    }
+
+    fn is_interactive(&self) -> bool {
+        self.interactive
+    }
+
+    fn prompt(&self, _label: &str, _validate: Validator) -> Result<String, CliError> {
+        Err(CliError::Input(
+            "this fake terminal answers no prompts".to_owned(),
+        ))
+    }
+
+    fn prompt_secret(
+        &self,
+        _label: &str,
+        _validate: Validator,
+    ) -> Result<secrecy::SecretString, CliError> {
+        Err(CliError::Input(
+            "this fake terminal answers no prompts".to_owned(),
+        ))
+    }
+
+    fn select(&self, label: &str, options: &[String], start: usize) -> Result<usize, CliError> {
+        self.menus
+            .lock()
+            .expect("menus lock")
+            .push((label.to_owned(), options.to_vec(), start));
+        self.picks
+            .lock()
+            .expect("picks lock")
+            .pop_front()
+            .ok_or_else(|| CliError::Input("this fake terminal answers no prompts".to_owned()))
+    }
+
+    fn ask(&self, _question: &str) -> Result<bool, CliError> {
+        Ok(false)
+    }
+
+    fn open_url(&self, _url: &str) -> bool {
+        false
     }
 
     fn write_output(
@@ -194,7 +255,15 @@ async fn run_cli_status(
         .try_get_matches_from(arguments)
         .expect("arguments parse");
     let cli = Cli::from_arg_matches(&matches).expect("arguments map to Cli");
-    execute(cli, &matches, environment, terminal).await
+    execute(
+        cli,
+        &matches,
+        environment,
+        &empty_store(),
+        &ProfileStore::new(None),
+        terminal,
+    )
+    .await
 }
 
 #[test]
@@ -997,18 +1066,283 @@ async fn an_empty_collection_is_reported_as_a_warning() {
     assert_eq!(terminal.stdout().trim(), "[]");
 }
 
+/// Mounts an identity endpoint that resolves the company named by
+/// `X-CAD-Company-Id`, as the platform does for an accessible company.
+async fn company_selecting_server() -> MockServer {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(IDENTITY_PATH))
+        .respond_with(|request: &wiremock::Request| {
+            let selected = request
+                .headers
+                .get("X-CAD-Company-Id")
+                .and_then(|value| value.to_str().ok())
+                .map_or_else(|| Uuid::from_u128(1).to_string(), str::to_owned);
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "principal": {
+                    "userId": Uuid::nil(),
+                    "affiliatedCompanyId": COMPANY_ID
+                },
+                "companySelection": {
+                    "resolvedCompanyId": selected,
+                    "source": "HEADER"
+                }
+            }))
+        })
+        .mount(&server)
+        .await;
+    server
+}
+
+#[tokio::test]
+async fn a_company_scoped_command_with_company_id_makes_one_identity_request() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(IDENTITY_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "principal": {
+                "userId": Uuid::nil(),
+                "affiliatedCompanyId": COMPANY_ID
+            },
+            "companySelection": {
+                "resolvedCompanyId": COMPANY_ID,
+                "source": "HEADER"
+            }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(ACTIVITY_GROUPS_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let terminal = FakeTerminal::default();
+
+    run_cli(
+        &[
+            "cad-cli",
+            "--server-url",
+            &server.uri(),
+            "--allow-insecure-http",
+            "--company-id",
+            &COMPANY_ID.to_string(),
+            "--output",
+            "json",
+            "activity-group",
+            "list",
+        ],
+        &credentials(),
+        &terminal,
+    )
+    .await
+    .expect("a scoped command with --company-id should succeed");
+
+    let requests = server.received_requests().await.expect("recorded requests");
+    assert_eq!(requests.len(), 2);
+    for request in &requests {
+        assert_eq!(
+            request
+                .headers
+                .get("X-CAD-Company-Id")
+                .and_then(|value| value.to_str().ok()),
+            Some(COMPANY_ID.to_string().as_str()),
+            "{} {}",
+            request.method,
+            request.url.path()
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_session_level_command_with_company_id_sends_no_company_header_on_its_own_request() {
+    let server = company_selecting_server().await;
+    Mock::given(method("GET"))
+        .and(path(COMPANIES_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let terminal = FakeTerminal::default();
+
+    run_cli(
+        &[
+            "cad-cli",
+            "--server-url",
+            &server.uri(),
+            "--allow-insecure-http",
+            "--company-id",
+            &COMPANY_ID.to_string(),
+            "--output",
+            "json",
+            "company",
+            "list",
+        ],
+        &credentials(),
+        &terminal,
+    )
+    .await
+    .expect("company list should succeed");
+
+    let requests = server.received_requests().await.expect("recorded requests");
+    assert_eq!(
+        request_paths(&server).await,
+        [
+            format!("GET {IDENTITY_PATH}"),
+            format!("GET {COMPANIES_PATH}")
+        ]
+    );
+    assert!(requests[0].headers.contains_key("X-CAD-Company-Id"));
+    assert!(
+        !requests[1].headers.contains_key("X-CAD-Company-Id"),
+        "the session-level request carries no company"
+    );
+}
+
+#[tokio::test]
+async fn a_rejected_key_with_company_id_exits_with_the_authentication_code() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(IDENTITY_PATH))
+        .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({"msg": "no"})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let terminal = FakeTerminal::default();
+
+    let error = run_cli(
+        &[
+            "cad-cli",
+            "--server-url",
+            &server.uri(),
+            "--allow-insecure-http",
+            "--company-id",
+            &COMPANY_ID.to_string(),
+            "activity-group",
+            "list",
+        ],
+        &credentials(),
+        &terminal,
+    )
+    .await
+    .expect_err("a rejected key must fail");
+
+    assert!(
+        matches!(error, CliError::Authentication { .. }),
+        "{error:?}"
+    );
+    assert_eq!(error.exit_code(), std::process::ExitCode::from(3));
+}
+
+#[tokio::test]
+async fn a_company_refused_with_a_403_with_company_id_exits_with_the_api_code() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(IDENTITY_PATH))
+        .respond_with(ResponseTemplate::new(403).set_body_json(serde_json::json!({"msg": "no"})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let terminal = FakeTerminal::default();
+
+    let error = run_cli(
+        &[
+            "cad-cli",
+            "--server-url",
+            &server.uri(),
+            "--allow-insecure-http",
+            "--company-id",
+            &COMPANY_ID.to_string(),
+            "activity-group",
+            "list",
+        ],
+        &credentials(),
+        &terminal,
+    )
+    .await
+    .expect_err("a refused company must fail");
+
+    assert!(matches!(error, CliError::Api { .. }), "{error:?}");
+    assert_eq!(error.exit_code(), std::process::ExitCode::from(4));
+    assert!(error.to_string().contains("HTTP 403"));
+}
+
+#[tokio::test]
+async fn a_company_the_platform_resolves_differently_fails_as_an_api_error() {
+    // The identity answers for its own company, whatever was requested.
+    let server = mock_server().await;
+    let other = Uuid::from_u128(0x99);
+    let terminal = FakeTerminal::default();
+
+    let error = run_cli(
+        &[
+            "cad-cli",
+            "--server-url",
+            &server.uri(),
+            "--allow-insecure-http",
+            "--company-id",
+            &other.to_string(),
+            "activity-group",
+            "list",
+        ],
+        &credentials(),
+        &terminal,
+    )
+    .await
+    .expect_err("an unresolved company must fail");
+
+    assert!(matches!(error, CliError::Api { .. }), "{error:?}");
+    assert_eq!(error.exit_code(), std::process::ExitCode::from(4));
+    assert!(error.to_string().contains(&other.to_string()));
+    assert_eq!(
+        request_paths(&server).await,
+        [format!("GET {IDENTITY_PATH}")]
+    );
+}
+
 #[tokio::test]
 async fn missing_credentials_fail_before_any_request() {
     let terminal = FakeTerminal::default();
     let error = run_cli(
-        &["cad-cli", "--environment", "staging", "company", "list"],
+        &[
+            "cad-cli",
+            "--server-url",
+            "https://staging.carbonaltdelete.eu",
+            "company",
+            "list",
+        ],
         &FakeEnvironment::default(),
         &terminal,
     )
     .await
     .expect_err("missing credentials must fail");
 
-    assert!(matches!(error, CliError::AuthConfig(_)));
+    assert!(matches!(error, CliError::AuthConfig { .. }));
+    assert!(
+        error
+            .to_string()
+            .contains("no credentials for https://staging.carbonaltdelete.eu"),
+        "{error}"
+    );
+    assert_eq!(terminal.stdout(), "");
+}
+
+#[tokio::test]
+async fn without_a_profile_or_a_server_a_command_says_how_to_choose_one() {
+    let terminal = FakeTerminal::default();
+    let error = run_cli(&["cad-cli", "company", "list"], &credentials(), &terminal)
+        .await
+        .expect_err("no profile and no server must fail");
+
+    assert!(matches!(error, CliError::Config { .. }), "{error:?}");
+    assert_eq!(error.exit_code(), std::process::ExitCode::from(2));
+    assert_eq!(
+        error.to_string(),
+        "configuration error: no profile is selected; run `cad-cli use profile <name>` \
+         (production, staging, dev, or a name of your own), pass --profile, or set \
+         CAD_SERVER_URL with CAD_API_KEY and CAD_API_SECRET"
+    );
     assert_eq!(terminal.stdout(), "");
 }
 
@@ -1048,8 +1382,8 @@ async fn unreadable_input_fails_before_the_identity_request() {
     let error = run_cli(
         &[
             "cad-cli",
-            "--environment",
-            "staging",
+            "--server-url",
+            "https://staging.carbonaltdelete.eu",
             "report",
             "create",
             "--input",
@@ -1105,4 +1439,911 @@ async fn update_check_needs_no_platform_configuration_and_renders_its_result() {
     assert_eq!(statuses.len(), 1);
     assert_eq!(statuses[0].0, StatusKind::Info);
     assert!(statuses[0].1.starts_with("cad-cli 99.0.0 is available"));
+}
+
+/// A credentials file holding a login for the profile `work`, which is the
+/// active profile and whose server is `origin`, all in `dir`.
+fn store_with_login(
+    origin: &str,
+    dir: &std::path::Path,
+) -> (crate::support::credentials::CredentialStore, ProfileStore) {
+    use crate::support::credentials::{CredentialStore, FileBackend, StoredCredential};
+
+    let store = CredentialStore::new(
+        None,
+        Some(FileBackend::new(
+            dir.join("cad-cli").join("credentials.json"),
+        )),
+    );
+    let work: ProfileName = "work".parse().unwrap();
+    store
+        .save_in_file(
+            &work,
+            &StoredCredential::api_key(
+                origin.to_owned(),
+                Uuid::from_u128(0xaa),
+                secrecy::SecretString::from("cad_aks_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_AbCde"),
+                Uuid::nil().into(),
+                chrono::Utc::now(),
+            ),
+        )
+        .unwrap();
+    let profiles = ProfileStore::new(Some(dir.join("cad-cli").join("profiles.json")));
+    let mut set = ProfileSet::default();
+    set.insert(
+        work.clone(),
+        Profile {
+            url: origin.to_owned(),
+            allow_insecure_http: true,
+            login: None,
+            company: None,
+        },
+    );
+    set.activate(work);
+    profiles.save(&set).unwrap();
+    (store, profiles)
+}
+
+async fn run_with_store(
+    arguments: &[&str],
+    environment: &FakeEnvironment,
+    store: &crate::support::credentials::CredentialStore,
+    profiles: &ProfileStore,
+    terminal: &FakeTerminal,
+) -> Result<u8, CliError> {
+    let matches = Cli::command()
+        .try_get_matches_from(arguments)
+        .expect("arguments parse");
+    let cli = Cli::from_arg_matches(&matches).expect("arguments map to Cli");
+    execute(cli, &matches, environment, store, profiles, terminal).await
+}
+
+fn bearer(request: &wiremock::Request) -> String {
+    request
+        .headers
+        .get("authorization")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned()
+}
+
+const STORED_BEARER: &str = "Bearer 00000000-0000-0000-0000-0000000000aa.cad_aks_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_AbCde";
+
+#[tokio::test]
+async fn a_command_runs_on_the_active_profiles_server_with_its_stored_login() {
+    let server = mock_server().await;
+    Mock::given(method("GET"))
+        .and(path(COMPANIES_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let (store, profiles) = store_with_login(&server.uri(), dir.path());
+    let terminal = FakeTerminal::default();
+
+    // No server, no profile and no credentials on the command line or in the
+    // environment: the active profile supplies all three.
+    let status = run_with_store(
+        &["cad-cli", "--output", "json", "company", "list"],
+        &FakeEnvironment::default(),
+        &store,
+        &profiles,
+        &terminal,
+    )
+    .await
+    .expect("the active profile is enough");
+
+    assert_eq!(status, 0);
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(
+        request_paths(&server).await,
+        [
+            format!("GET {IDENTITY_PATH}"),
+            format!("GET {COMPANIES_PATH}")
+        ]
+    );
+    assert!(
+        requests
+            .iter()
+            .all(|request| bearer(request) == STORED_BEARER)
+    );
+}
+
+#[tokio::test]
+async fn the_environment_beats_the_stored_login() {
+    let server = mock_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (store, profiles) = store_with_login(&server.uri(), dir.path());
+
+    run_with_store(
+        &["cad-cli", "--output", "json", "use", "--check"],
+        &credentials(),
+        &store,
+        &profiles,
+        &FakeTerminal::default(),
+    )
+    .await
+    .expect("the environment's key is used");
+
+    // The identity request, then the account's e-mail.
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 2);
+    for request in &requests {
+        assert_eq!(bearer(request), format!("Bearer {}.secret", Uuid::nil()));
+    }
+}
+
+#[tokio::test]
+async fn a_server_given_by_flag_selects_the_profile_whose_server_it_is() {
+    let server = mock_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (store, profiles) = store_with_login(&server.uri(), dir.path());
+
+    // Make another profile the active one: only the server picks `work`.
+    let mut set = profiles.load().unwrap();
+    set.insert(
+        "other".parse().unwrap(),
+        Profile {
+            url: "https://other.example.test".to_owned(),
+            allow_insecure_http: false,
+            login: None,
+            company: None,
+        },
+    );
+    set.activate("other".parse().unwrap());
+    profiles.save(&set).unwrap();
+
+    run_with_store(
+        &[
+            "cad-cli",
+            "--server-url",
+            &server.uri(),
+            "--output",
+            "json",
+            "use",
+            "--check",
+        ],
+        &FakeEnvironment::default(),
+        &store,
+        &profiles,
+        &FakeTerminal::default(),
+    )
+    .await
+    .expect("the profile whose server it is supplies the login and the opt-in");
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(
+        requests
+            .iter()
+            .all(|request| bearer(request) == STORED_BEARER)
+    );
+}
+
+#[tokio::test]
+async fn a_foreign_server_never_receives_the_active_profiles_key() {
+    let server = mock_server().await;
+    let foreign = mock_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (store, profiles) = store_with_login(&server.uri(), dir.path());
+
+    // `CAD_SERVER_URL` names another server while `work` is active.
+    let environment = FakeEnvironment(HashMap::from([(
+        "CAD_SERVER_URL".to_owned(),
+        foreign.uri(),
+    )]));
+    let error = run_with_store(
+        &["cad-cli", "--allow-insecure-http", "use", "--check"],
+        &environment,
+        &store,
+        &profiles,
+        &FakeTerminal::default(),
+    )
+    .await
+    .expect_err("no stored login may be used for a server that is not the profile's");
+    assert!(matches!(error, CliError::AuthConfig { .. }), "{error}");
+    assert!(
+        error.to_string().contains(&format!(
+            "no credentials for {}; set CAD_API_KEY and CAD_API_SECRET, or create a profile \
+             with `cad-cli use profile <name> --url {}`",
+            foreign.uri(),
+            foreign.uri()
+        )),
+        "{error}"
+    );
+    assert!(foreign.received_requests().await.unwrap().is_empty());
+    assert!(server.received_requests().await.unwrap().is_empty());
+
+    // An explicit profile together with a foreign server fails outright.
+    let error = run_with_store(
+        &[
+            "cad-cli",
+            "--profile",
+            "work",
+            "--server-url",
+            &foreign.uri(),
+            "--allow-insecure-http",
+            "use",
+            "--check",
+        ],
+        &FakeEnvironment::default(),
+        &store,
+        &profiles,
+        &FakeTerminal::default(),
+    )
+    .await
+    .expect_err("an explicit profile logs in to its own server only");
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "configuration error: profile work logs in to {}, not {}",
+            server.uri(),
+            foreign.uri()
+        )
+    );
+    assert!(foreign.received_requests().await.unwrap().is_empty());
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_profile_without_a_login_fails_before_a_request_naming_the_way_out() {
+    let server = mock_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_, profiles) = store_with_login(&server.uri(), dir.path());
+    let store = crate::support::credentials::memory::empty_store();
+
+    let error = run_with_store(
+        &["cad-cli", "use", "--check"],
+        &FakeEnvironment::default(),
+        &store,
+        &profiles,
+        &FakeTerminal::default(),
+    )
+    .await
+    .expect_err("no credentials anywhere");
+
+    assert!(matches!(error, CliError::AuthConfig { .. }));
+    assert_eq!(error.exit_code(), std::process::ExitCode::from(2));
+    assert_eq!(
+        error.to_string(),
+        "authentication configuration error: profile work has no login; run `cad-cli use \
+         profile work --login`, or set CAD_API_KEY and CAD_API_SECRET"
+    );
+    assert_eq!(request_paths(&server).await, Vec::<String>::new());
+}
+
+/// Gives the profile `work` a company.
+fn choose_company(profiles: &ProfileStore, company: Uuid) {
+    let mut set = profiles.load().unwrap();
+    let work: ProfileName = "work".parse().unwrap();
+    let mut profile = set.get(&work).unwrap().clone();
+    profile.company = Some(crate::support::profiles::Company {
+        id: company.into(),
+        name: Some("Acme GmbH".to_owned()),
+    });
+    set.insert(work, profile);
+    profiles.save(&set).unwrap();
+}
+
+#[tokio::test]
+async fn a_company_scoped_command_without_a_company_is_refused_before_any_request() {
+    let server = mock_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (store, profiles) = store_with_login(&server.uri(), dir.path());
+
+    // With a profile in use, the error names it.
+    let error = run_with_store(
+        &["cad-cli", "activity-group", "list"],
+        &FakeEnvironment::default(),
+        &store,
+        &profiles,
+        &FakeTerminal::default(),
+    )
+    .await
+    .expect_err("the platform's own choice of company is not used");
+    assert!(matches!(error, CliError::Config { .. }), "{error:?}");
+    assert_eq!(error.exit_code(), std::process::ExitCode::from(2));
+    assert_eq!(
+        error.to_string(),
+        "configuration error: no company is selected for profile work; run `cad-cli use \
+         company <name|id>`, or pass --company-id or set CAD_COMPANY_ID"
+    );
+
+    // With no profile, the error names the flag and the variable only.
+    let environment = FakeEnvironment(HashMap::from([
+        ("CAD_API_KEY".into(), Uuid::nil().to_string()),
+        ("CAD_API_SECRET".into(), "secret".into()),
+    ]));
+    let error = run_with_store(
+        &[
+            "cad-cli",
+            "--server-url",
+            &server.uri(),
+            "--allow-insecure-http",
+            "--profile",
+            "work",
+            "reporting-period",
+            "list",
+        ],
+        &environment,
+        &store,
+        &ProfileStore::new(None),
+        &FakeTerminal::default(),
+    )
+    .await
+    .expect_err("there is no profile in a store that has none");
+    assert!(error.to_string().contains("there is no profile work"));
+    let error = run_with_store(
+        &[
+            "cad-cli",
+            "--server-url",
+            &server.uri(),
+            "--allow-insecure-http",
+            "reporting-period",
+            "list",
+        ],
+        &environment,
+        &store,
+        &ProfileStore::new(None),
+        &FakeTerminal::default(),
+    )
+    .await
+    .expect_err("a server without a profile has no company either");
+    assert_eq!(
+        error.to_string(),
+        "configuration error: no company is selected; pass --company-id or set CAD_COMPANY_ID"
+    );
+
+    assert_eq!(
+        request_paths(&server).await,
+        Vec::<String>::new(),
+        "every refusal happens before the connection"
+    );
+}
+
+#[tokio::test]
+async fn a_session_level_command_needs_no_company() {
+    let server = mock_server().await;
+    for (path_, group) in [
+        (COMPANIES_PATH, "company"),
+        (COMPANY_TEMPLATES_PATH, "company-template"),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(path_))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+            .mount(&server)
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let (store, profiles) = store_with_login(&server.uri(), dir.path());
+        run_with_store(
+            &["cad-cli", "--output", "json", group, "list"],
+            &FakeEnvironment::default(),
+            &store,
+            &profiles,
+            &FakeTerminal::default(),
+        )
+        .await
+        .unwrap_or_else(|error| panic!("{group} list: {error}"));
+    }
+    for request in server.received_requests().await.unwrap() {
+        assert!(
+            !request.headers.contains_key("X-CAD-Company-Id"),
+            "{}",
+            request.url.path()
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_profiles_company_is_sent_in_the_one_identity_request_and_the_flag_beats_it() {
+    let server = company_selecting_server().await;
+    Mock::given(method("GET"))
+        .and(path(ACTIVITY_GROUPS_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let (store, profiles) = store_with_login(&server.uri(), dir.path());
+    choose_company(&profiles, COMPANY_ID);
+
+    run_with_store(
+        &["cad-cli", "--output", "json", "activity-group", "list"],
+        &FakeEnvironment::default(),
+        &store,
+        &profiles,
+        &FakeTerminal::default(),
+    )
+    .await
+    .expect("the profile's company is enough");
+    assert_eq!(
+        request_paths(&server).await,
+        [
+            format!("GET {IDENTITY_PATH}"),
+            format!("GET {ACTIVITY_GROUPS_PATH}")
+        ]
+    );
+    for request in server.received_requests().await.unwrap() {
+        assert_eq!(
+            request
+                .headers
+                .get("X-CAD-Company-Id")
+                .and_then(|value| value.to_str().ok()),
+            Some(COMPANY_ID.to_string().as_str())
+        );
+    }
+
+    let other = Uuid::from_u128(0x77);
+    run_with_store(
+        &[
+            "cad-cli",
+            "--company-id",
+            &other.to_string(),
+            "--output",
+            "json",
+            "activity-group",
+            "list",
+        ],
+        &FakeEnvironment::default(),
+        &store,
+        &profiles,
+        &FakeTerminal::default(),
+    )
+    .await
+    .expect("the flag beats the profile");
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 4);
+    for request in &requests[2..] {
+        assert_eq!(
+            request
+                .headers
+                .get("X-CAD-Company-Id")
+                .and_then(|value| value.to_str().ok()),
+            Some(other.to_string().as_str())
+        );
+    }
+}
+
+#[tokio::test]
+async fn use_writes_its_data_to_stdout_and_its_lines_to_stderr() {
+    let dir = tempfile::tempdir().unwrap();
+    let origin = "http://127.0.0.1:1";
+    let (store, profiles) = store_with_login(origin, dir.path());
+    let terminal = FakeTerminal::default();
+
+    let status = run_with_store(
+        &[
+            "cad-cli", "--output", "json", "use", "profile", "work", "--forget",
+        ],
+        &FakeEnvironment::default(),
+        &store,
+        &profiles,
+        &terminal,
+    )
+    .await
+    .expect("forgetting needs no server");
+
+    assert_eq!(status, 0);
+    let stdout: serde_json::Value = serde_json::from_str(&terminal.stdout()).unwrap();
+    assert_eq!(
+        stdout,
+        serde_json::json!({"profile": "work", "removed": ["file"], "wasActive": true})
+    );
+    let statuses = terminal.statuses();
+    assert_eq!(statuses[0].0, StatusKind::Success);
+    assert!(statuses[0].1.contains("forgot profile work"));
+    assert!(!dir.path().join("cad-cli").join("credentials.json").exists());
+    assert!(profiles.load().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_profile_not_in_the_file_fails_naming_the_command_that_creates_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let (store, profiles) = store_with_login("http://127.0.0.1:1", dir.path());
+    let error = run_with_store(
+        &["cad-cli", "--profile", "nope", "company", "list"],
+        &FakeEnvironment::default(),
+        &store,
+        &profiles,
+        &FakeTerminal::default(),
+    )
+    .await
+    .expect_err("the profile does not exist");
+    assert_eq!(
+        error.to_string(),
+        "configuration error: there is no profile nope; create it with `cad-cli use profile nope`"
+    );
+}
+
+const OTHER_COMPANY_ID: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0077);
+const USER_ROLES_PATH: &str = "/api/accounts/v1/user-roles";
+
+/// A platform where the key's user has a company of their own, `COMPANY_ID`,
+/// and an expert role in `OTHER_COMPANY_ID`, and lists no reporting periods.
+async fn two_company_server() -> MockServer {
+    let company = |id: Uuid, name: &str| {
+        serde_json::json!({
+            "id": id,
+            "name": name,
+            "displayName": name,
+            "createdAt": "2026-01-01T00:00:00Z",
+            "isConsultingCompany": false,
+            "isDemoCompany": false,
+            "availableClientCompanies": null,
+            "companyStatus": "ACTIVE"
+        })
+    };
+    let server = company_selecting_server().await;
+    Mock::given(method("GET"))
+        .and(path(COMPANIES_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            company(OTHER_COMPANY_ID, "Other AG"),
+            company(COMPANY_ID, "Acme GmbH"),
+        ])))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(USER_ROLES_PATH))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!([{
+                "id": Uuid::from_u128(1),
+                "userId": Uuid::nil(),
+                "companyId": OTHER_COMPANY_ID,
+                "userRole": "EXPERT"
+            }])),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(REPORTING_PERIODS_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .mount(&server)
+        .await;
+    server
+}
+
+fn company_header(request: &wiremock::Request) -> Option<String> {
+    request
+        .headers
+        .get("X-CAD-Company-Id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned)
+}
+
+#[tokio::test]
+async fn company_id_dash_picks_a_company_for_this_command_and_saves_nothing() {
+    let server = two_company_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (store, profiles) = store_with_login(&server.uri(), dir.path());
+    choose_company(&profiles, OTHER_COMPANY_ID);
+    let saved = std::fs::read(dir.path().join("cad-cli").join("profiles.json")).unwrap();
+    // The person picks the first of the list, Acme; the cursor starts on the
+    // profile's company, the second.
+    let terminal = FakeTerminal::picking(&[0]);
+
+    run_with_store(
+        &[
+            "cad-cli",
+            "--output",
+            "json",
+            "--company-id",
+            "-",
+            "reporting-period",
+            "list",
+        ],
+        &FakeEnvironment::default(),
+        &store,
+        &profiles,
+        &terminal,
+    )
+    .await
+    .expect("the picked company is used");
+
+    assert_eq!(
+        terminal.menus(),
+        [(
+            "Company:".to_owned(),
+            vec![
+                format!("Acme GmbH  {COMPANY_ID}"),
+                format!("Other AG  {OTHER_COMPANY_ID}"),
+            ],
+            1
+        )]
+    );
+    let requests = server.received_requests().await.unwrap();
+    // The key, the companies and the roles with no company; then the access
+    // to the picked one, and the command.
+    assert_eq!(requests.len(), 5, "{:?}", request_paths(&server).await);
+    assert!(
+        requests[..3]
+            .iter()
+            .all(|request| company_header(request).is_none())
+    );
+    assert_eq!(requests[3].url.path(), IDENTITY_PATH);
+    assert_eq!(requests[4].url.path(), REPORTING_PERIODS_PATH);
+    for request in &requests[3..] {
+        assert_eq!(company_header(request), Some(COMPANY_ID.to_string()));
+    }
+    assert_eq!(
+        std::fs::read(dir.path().join("cad-cli").join("profiles.json")).unwrap(),
+        saved,
+        "the pick is for this command only"
+    );
+}
+
+#[tokio::test]
+async fn company_id_dash_beats_the_environment_and_gives_up_with_the_picker() {
+    let server = two_company_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (store, profiles) = store_with_login(&server.uri(), dir.path());
+    // `credentials()` has CAD_COMPANY_ID too; `-` asks instead.
+    let terminal = FakeTerminal::picking(&[]);
+    let environment = FakeEnvironment(HashMap::from([(
+        "CAD_COMPANY_ID".to_owned(),
+        COMPANY_ID.to_string(),
+    )]));
+
+    let error = run_with_store(
+        &["cad-cli", "--company-id", "-", "reporting-period", "list"],
+        &environment,
+        &store,
+        &profiles,
+        &terminal,
+    )
+    .await
+    .expect_err("the list was not answered");
+
+    assert_eq!(terminal.menus().len(), 1);
+    assert!(matches!(error, CliError::Input(_)), "{error}");
+    // Nothing was requested for a company, and the command never ran.
+    assert!(
+        !request_paths(&server)
+            .await
+            .contains(&format!("GET {REPORTING_PERIODS_PATH}"))
+    );
+}
+
+#[tokio::test]
+async fn company_id_dash_without_a_terminal_names_what_to_pass_and_requests_nothing() {
+    let server = two_company_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (store, profiles) = store_with_login(&server.uri(), dir.path());
+
+    let error = run_with_store(
+        &["cad-cli", "--company-id", "-", "reporting-period", "list"],
+        &FakeEnvironment::default(),
+        &store,
+        &profiles,
+        &FakeTerminal::default(),
+    )
+    .await
+    .expect_err("there is no one to ask");
+
+    assert!(matches!(error, CliError::Input(_)), "{error}");
+    assert_eq!(
+        error.to_string(),
+        "invalid input: `-` picks a company at a terminal, and there is none; pass --company-id \
+         <ID> or set CAD_COMPANY_ID"
+    );
+    assert_eq!(request_paths(&server).await, Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn company_id_dash_on_a_command_that_acts_on_no_company_is_a_usage_error() {
+    let server = two_company_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (store, profiles) = store_with_login(&server.uri(), dir.path());
+    let terminal = FakeTerminal::picking(&[0]);
+
+    let error = run_with_store(
+        &["cad-cli", "--company-id", "-", "company", "list"],
+        &FakeEnvironment::default(),
+        &store,
+        &profiles,
+        &terminal,
+    )
+    .await
+    .expect_err("`company list` acts on no company");
+
+    assert!(matches!(error, CliError::Input(_)), "{error}");
+    assert_eq!(
+        error.to_string(),
+        "invalid input: --company-id - picks a company, and this command acts on none"
+    );
+    assert_eq!(terminal.menus(), []);
+    assert_eq!(request_paths(&server).await, Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn company_id_dash_when_the_login_can_act_on_no_company_says_so() {
+    let server = two_company_server().await;
+    server.reset().await;
+    Mock::given(method("GET"))
+        .and(path(IDENTITY_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "principal": {"userId": Uuid::nil(), "affiliatedCompanyId": COMPANY_ID},
+            "companySelection": {"resolvedCompanyId": COMPANY_ID, "source": "DEFAULT"}
+        })))
+        .mount(&server)
+        .await;
+    for endpoint in [COMPANIES_PATH, USER_ROLES_PATH] {
+        Mock::given(method("GET"))
+            .and(path(endpoint))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+            .mount(&server)
+            .await;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let (store, profiles) = store_with_login(&server.uri(), dir.path());
+    let terminal = FakeTerminal::picking(&[0]);
+
+    let error = run_with_store(
+        &["cad-cli", "--company-id", "-", "reporting-period", "list"],
+        &FakeEnvironment::default(),
+        &store,
+        &profiles,
+        &terminal,
+    )
+    .await
+    .expect_err("there is nothing to pick");
+
+    assert_eq!(
+        error.to_string(),
+        "invalid input: your login cannot pick a company; it can act on no company"
+    );
+    assert_eq!(terminal.menus(), []);
+}
+
+/// The environment of a stateless run against `server`: the credentials, the
+/// company and the server all given outright, no profile named.
+fn stateless_environment(server: &MockServer) -> FakeEnvironment {
+    let mut environment = credentials();
+    environment.0.insert("CAD_SERVER_URL".into(), server.uri());
+    environment
+}
+
+/// A configuration directory whose `profiles.json` is `content`.
+fn profiles_file(content: &str) -> (tempfile::TempDir, ProfileStore) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cad-cli").join("profiles.json");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, content).unwrap();
+    (dir, ProfileStore::new(Some(path)))
+}
+
+async fn company_list_server() -> MockServer {
+    let server = mock_server().await;
+    Mock::given(method("GET"))
+        .and(path(COMPANIES_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .mount(&server)
+        .await;
+    server
+}
+
+async fn company_list(
+    environment: &FakeEnvironment,
+    profiles: &ProfileStore,
+    terminal: &FakeTerminal,
+) -> Result<u8, CliError> {
+    run_with_store(
+        &[
+            "cad-cli",
+            "--allow-insecure-http",
+            "--output",
+            "json",
+            "company",
+            "list",
+        ],
+        environment,
+        &empty_store(),
+        profiles,
+        terminal,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_stateless_run_ignores_a_profiles_file_that_cannot_be_read() {
+    let server = company_list_server().await;
+    let (dir, profiles) = profiles_file("this is not JSON");
+    let terminal = FakeTerminal::default();
+
+    company_list(&stateless_environment(&server), &profiles, &terminal)
+        .await
+        .expect("a stateless run needs no profile");
+
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&terminal.stdout()).expect("stdout is JSON"),
+        serde_json::json!([])
+    );
+    let statuses = terminal.statuses();
+    assert_eq!(statuses.len(), 2, "{statuses:?}");
+    assert_eq!(statuses[0].0, StatusKind::Warning);
+    let file = dir.path().join("cad-cli").join("profiles.json");
+    assert!(
+        statuses[0].1.starts_with(&format!(
+            "ignoring profiles: {} is not a profiles file (",
+            file.display()
+        )),
+        "{statuses:?}"
+    );
+    assert_eq!(statuses[1], (StatusKind::Warning, "no results".to_owned()));
+}
+
+#[tokio::test]
+async fn a_readable_profiles_file_gives_no_warning_in_a_stateless_run() {
+    let server = company_list_server().await;
+    let (_dir, profiles) = profiles_file("");
+    profiles.save(&ProfileSet::default()).unwrap();
+    let terminal = FakeTerminal::default();
+
+    company_list(&stateless_environment(&server), &profiles, &terminal)
+        .await
+        .expect("a stateless run succeeds");
+
+    assert_eq!(
+        terminal.statuses(),
+        [(StatusKind::Warning, "no results".to_owned())]
+    );
+}
+
+#[tokio::test]
+async fn a_named_profile_does_not_make_a_run_stateless() {
+    let server = company_list_server().await;
+    let (dir, profiles) = profiles_file("this is not JSON");
+    let mut environment = stateless_environment(&server);
+    environment.0.insert("CAD_PROFILE".into(), "work".into());
+    let terminal = FakeTerminal::default();
+
+    let error = company_list(&environment, &profiles, &terminal)
+        .await
+        .expect_err("the profile named needs the file");
+
+    let file = dir.path().join("cad-cli").join("profiles.json");
+    assert!(
+        error.to_string().contains(&file.display().to_string()),
+        "{error}"
+    );
+    assert_eq!(terminal.statuses(), []);
+}
+
+#[tokio::test]
+async fn a_run_with_no_server_given_needs_the_profiles_file() {
+    let server = company_list_server().await;
+    let (dir, profiles) = profiles_file("this is not JSON");
+    let mut environment = stateless_environment(&server);
+    environment.0.remove("CAD_SERVER_URL");
+    let terminal = FakeTerminal::default();
+
+    let error = company_list(&environment, &profiles, &terminal)
+        .await
+        .expect_err("the server comes from a profile");
+
+    let file = dir.path().join("cad-cli").join("profiles.json");
+    assert!(
+        error.to_string().contains(&file.display().to_string()),
+        "{error}"
+    );
+    assert_eq!(terminal.statuses(), []);
+}
+
+#[tokio::test]
+async fn a_run_without_the_environment_credentials_needs_the_profiles_file() {
+    let server = company_list_server().await;
+    let (dir, profiles) = profiles_file("this is not JSON");
+    let mut environment = stateless_environment(&server);
+    environment.0.remove("CAD_API_KEY");
+    environment.0.remove("CAD_API_SECRET");
+    let terminal = FakeTerminal::default();
+
+    let error = company_list(&environment, &profiles, &terminal)
+        .await
+        .expect_err("the login comes from a profile");
+
+    let file = dir.path().join("cad-cli").join("profiles.json");
+    assert!(
+        error.to_string().contains(&file.display().to_string()),
+        "{error}"
+    );
+    assert_eq!(terminal.statuses(), []);
 }

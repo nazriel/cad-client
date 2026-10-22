@@ -6,6 +6,8 @@ use std::time::Duration;
 use cad_api::ids::CompanyId;
 use clap::{Args, ValueEnum, ValueHint};
 
+use crate::support::profiles::ProfileName;
+
 /// Options that apply to every command.
 ///
 /// They get a heading of their own so that a subcommand's `--help` keeps its
@@ -13,17 +15,19 @@ use clap::{Args, ValueEnum, ValueHint};
 #[derive(Debug, Args)]
 #[command(next_help_heading = "Global options")]
 pub struct GlobalArgs {
-    /// Exact application origin. Has precedence over every preset.
+    /// Use this profile instead of the active one (see `cad-cli use`).
+    #[arg(long, global = true, value_name = "NAME", add = crate::completion::profile_names())]
+    pub profile: Option<ProfileName>,
+
+    /// Exact application origin, instead of the profile's. A stored login is
+    /// used only with the profile whose server this is.
     #[arg(long, global = true, value_hint = ValueHint::Url)]
     pub server_url: Option<String>,
 
-    /// Select the production or staging application origin.
-    #[arg(long, value_enum, global = true)]
-    pub environment: Option<EnvironmentName>,
-
-    /// Use another accessible company instead of the company from the API-key token.
-    #[arg(long, global = true, add = crate::completion::company_ids())]
-    pub company_id: Option<CompanyId>,
+    /// Accessible company to act on, instead of the profile's (see `cad-cli use company`).
+    /// `-` picks one from a list at a terminal, for this command only.
+    #[arg(long, global = true, value_name = "ID|-", add = crate::completion::company_ids())]
+    pub company_id: Option<CompanyArg>,
 
     /// Permit HTTP for localhost/loopback mock servers.
     #[arg(long, global = true)]
@@ -33,7 +37,8 @@ pub struct GlobalArgs {
     #[arg(long, value_parser = parse_duration, default_value = "60s", global = true)]
     pub request_timeout: Duration,
 
-    /// Select human-readable or machine-readable output.
+    /// Select human-readable or machine-readable output. With json or jsonl a failure is
+    /// one JSON object on stderr; usage errors from the argument parser stay text.
     #[arg(long, value_enum, default_value_t = OutputFormat::Table, global = true)]
     pub output: OutputFormat,
 
@@ -42,17 +47,27 @@ pub struct GlobalArgs {
     pub yes: bool,
 }
 
-/// Deployment preset selectable with `--environment`.
-///
-/// The aliases mirror the ones [`cad_api::Environment`] accepts for `CAD_ENV`,
-/// so the flag and the variable never disagree about what `prod` means.
-#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
-pub enum EnvironmentName {
-    #[value(alias = "prod")]
-    Production,
-    #[value(alias = "stage")]
-    Staging,
+/// The value of `--company-id`: a company's ID, or `-` to pick one from a list
+/// at a terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompanyArg {
+    Id(CompanyId),
+    Pick,
 }
+
+impl FromStr for CompanyArg {
+    type Err = uuid::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if value == PICK {
+            return Ok(Self::Pick);
+        }
+        value.parse().map(Self::Id)
+    }
+}
+
+/// What stands for "pick from a list" where a value is expected.
+pub(crate) const PICK: &str = "-";
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
 pub enum OutputFormat {

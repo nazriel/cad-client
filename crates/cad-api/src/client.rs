@@ -160,10 +160,40 @@ impl Client<Disconnected> {
     /// request fails or the server returns an invalid response.
     pub async fn connect(self, credentials: ApiKeyV2Credentials) -> Result<Client<Connected>> {
         let transport = self.state.transport;
-        let context = transport.identity(&credentials).await?;
+        let context = transport.identity(&credentials, None).await?;
         Ok(Client {
             state: Connected {
                 core: ClientCore::new(transport, credentials, None, context),
+            },
+        })
+    }
+
+    /// Validates machine API-key credentials and scopes the session to `company_id`
+    /// with a single identity request.
+    ///
+    /// A rejected key (HTTP 401) is an authentication error, as with
+    /// [`connect`](Self::connect). Any other client error may concern the
+    /// company and stays the API error [`for_company`](Client::for_company)
+    /// returns; so is a response that resolves another company than the one
+    /// requested a protocol error, as there.
+    ///
+    /// # Errors
+    ///
+    /// Returns an authentication, transport, or protocol error when the identity
+    /// request fails, the server returns an invalid response, or it resolves a
+    /// different company.
+    pub async fn connect_for_company(
+        self,
+        credentials: ApiKeyV2Credentials,
+        company_id: CompanyId,
+    ) -> Result<Client<CompanyScoped>> {
+        let transport = self.state.transport;
+        let context = transport.identity(&credentials, Some(company_id)).await?;
+        ensure_resolved(&context, company_id)?;
+        Ok(Client {
+            state: CompanyScoped {
+                core: ClientCore::new(transport, credentials, Some(company_id), context),
+                company_id,
             },
         })
     }
@@ -256,10 +286,37 @@ impl Client<CompanyScoped> {
     pub(crate) const fn core(&self) -> &ClientCore {
         &self.state.core
     }
+
+    /// Returns a client on the same transport and credentials with no company
+    /// selected, without making a request.
+    ///
+    /// Its [`context`](Client::context) is the one this scoped connection
+    /// received, including the company it resolved.
+    #[must_use]
+    pub fn unscoped(&self) -> Client<Connected> {
+        Client {
+            state: Connected {
+                core: self.state.core.without_company(),
+            },
+        }
+    }
 }
 
 async fn switch_company(core: &ClientCore, company_id: CompanyId) -> Result<Client<CompanyScoped>> {
     let context = core.identity_for_company(company_id).await?;
+    ensure_resolved(&context, company_id)?;
+    let switched_core = core.with_company(company_id, context);
+
+    Ok(Client {
+        state: CompanyScoped {
+            core: switched_core,
+            company_id,
+        },
+    })
+}
+
+/// Checks that an identity response resolved exactly the requested company.
+fn ensure_resolved(context: &SessionContext, company_id: CompanyId) -> Result<()> {
     let resolved = context
         .company_selection
         .resolved_company_id
@@ -274,12 +331,5 @@ async fn switch_company(core: &ClientCore, company_id: CompanyId) -> Result<Clie
             "machine identity resolved company {resolved}, expected {company_id}"
         )));
     }
-    let switched_core = core.with_company(company_id, context);
-
-    Ok(Client {
-        state: CompanyScoped {
-            core: switched_core,
-            company_id,
-        },
-    })
+    Ok(())
 }
