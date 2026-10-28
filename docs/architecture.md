@@ -73,6 +73,56 @@ an online command. Its release notes are reading matter, not data: they go to
 stderr through `Terminal::notes`, only with table output and only at a
 terminal.
 
+### Where credentials live
+
+`cad-cli use profile <name>` creates a profile and stores an API key for it,
+and every other command finds both again; the whole of that lives in
+`cad-client`:
+
+```text
+crates/cad-client/src/support/credentials/
+├── mod.rs              # the stored entry, the store, keyed by profile
+├── resolve.rs          # environment > keyring > file
+├── system_keyring.rs   # the OS keyring, each call on its own thread
+├── file.rs             # credentials.json: 0600 file in a 0700 directory
+├── memory.rs           # in-memory keyring double (tests only)
+└── tests.rs
+crates/cad-client/src/support/profiles/       # profiles.json: the profiles, the active one
+crates/cad-client/src/support/config_dir.rs   # the per-user configuration directory
+crates/cad-client/src/cmds/use/               # list, profile (create, switch, login), forget, company, check
+```
+
+A profile is a name, a server origin, the facts about its login and its
+company, and `support/profiles/` keeps them in `profiles.json` beside
+`credentials.json`: typed serde, camelCase, written like the credentials file.
+It holds no secret. The secret is stored per profile, in the keyring under
+`service = "cad-cli"`, `account = <profile name>`, or in `credentials.json`
+keyed by the same name. Each stored entry also records the origin it was
+created for, and `resolve.rs` refuses an entry whose origin is not the one
+selected, so a login is never sent to another server, whatever the profile is
+called. `config.rs` owns the selection: which profile, server, credentials and
+company a command uses (see the README's "Configure" for the order).
+
+`cad-api` does not know where credentials are kept. It owns what a credential
+is (`ApiKeyV2Credentials`), how its two halves are written and checked
+(`parse_key_id`, `parse_secret`, `parse_token`) and how it authenticates; where
+the Key ID and Secret come from, and how they are kept between runs, is a
+property of the application. A library consumer therefore decides that for
+itself, and the SDK stays free of keyring, file and prompt dependencies.
+
+The stored value is JSON tagged by `kind` (`apiKey` today), so another kind of
+credential can be added without a new layout; an entry of a kind this version
+does not know is an error naming the kind and the profile, never ignored. The
+secret is a `SecretString` from the moment it is read until the bearer token is
+built. `use` is its own invocation in `cmds/mod.rs`: `use profile` must not
+resolve stored credentials before it has any, and listing and `--forget` never
+connect. Keyring calls block, so each runs on a short-lived thread of its own
+and never on a thread of the application's runtime. The keyring is `keyring-core` with one store per
+platform (Keychain, Credential Manager, and on other Unix systems the Secret
+Service through libdbus, vendored so that static musl builds need no system
+library); the workspace `Cargo.toml` says why that is not the pure-Rust zbus
+store.
+
 ## Platform routes and OpenAPI
 
 `openapi/openapi_current.json` is the current development contract. Inspect it
@@ -136,6 +186,12 @@ crates/cad-client/src/cmds/
 │   └── ... workflow-specific modules
 └── schema.rs
 ```
+
+`use` is the one exception. It is a verb, not a resource: it shows and
+switches the profile commands run with, logs in, and chooses the company, and
+it is the only command that changes that selection. It is named so that it
+cannot collide with a platform domain, which are all nouns. Its group lives in
+`cmds/use/` like any other.
 
 New or materially changed command groups use `<resource>/mod.rs` with a
 sibling `tests.rs`, declared from `mod.rs` with `#[cfg(test)] mod tests;`.

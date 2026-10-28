@@ -17,6 +17,7 @@ path = "src/bin/cad-cli.rs"
 
 [dependencies]
 cad-api = { path = "../cad-api" }
+chrono.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
 clap_mangen.workspace = true
@@ -30,13 +31,17 @@ console.workspace = true
 flate2.workspace = true
 humantime.workspace = true
 indicatif.workspace = true
+inquire.workspace = true
+keyring-core.workspace = true
 reqwest.workspace = true
 ring.workspace = true
 schemars.workspace = true
+secrecy.workspace = true
 self-replace.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+strum.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 tracing-subscriber.workspace = true
@@ -52,10 +57,19 @@ tar.workspace = true
 [target.'cfg(windows)'.dependencies]
 zip.workspace = true
 
+# The system keyring behind `use profile`: one store per platform.
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-native-keyring-store.workspace = true
+
+[target.'cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))'.dependencies]
+dbus-secret-service-keyring-store.workspace = true
+
 [dev-dependencies]
 assert_cmd.workspace = true
 base64.workspace = true
-chrono.workspace = true
 predicates.workspace = true
 shlex.workspace = true
 wiremock.workspace = true

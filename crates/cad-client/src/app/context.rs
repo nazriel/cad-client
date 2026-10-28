@@ -19,6 +19,11 @@ impl<'a> CommandContext<'a> {
         }
     }
 
+    /// The process I/O, for commands that prompt or open a browser.
+    pub(crate) const fn terminal(&self) -> &'a dyn Terminal {
+        self.terminal
+    }
+
     pub(crate) fn confirm(&self, prompt: &str) -> Result<(), CliError> {
         self.terminal.confirm(prompt, self.assume_yes)
     }

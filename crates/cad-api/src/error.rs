@@ -113,6 +113,23 @@ impl Error {
             other => other,
         }
     }
+
+    /// Reclassifies only an HTTP 401 as an authentication failure.
+    ///
+    /// Applied to the identity request that also selects a company: a 401 means
+    /// the key was rejected, while any other client error may concern the
+    /// company and stays the API error [`Client::for_company`](crate::Client)
+    /// reports for it.
+    pub(crate) fn classify_unauthorized(self) -> Self {
+        match self {
+            Self::Api {
+                status: 401,
+                message,
+                ..
+            } => Self::authentication(Some(401), message),
+            other => other,
+        }
+    }
 }
 
 /// Safe, coarse classification of a `reqwest` failure.
@@ -176,6 +193,23 @@ mod tests {
 
         let rejected = Error::from_api_response(401, b"{}").classify_auth();
         assert!(matches!(rejected, Error::Authentication { .. }));
+    }
+
+    #[test]
+    fn only_a_401_becomes_an_authentication_failure_when_a_company_is_selected() {
+        let rejected =
+            Error::from_api_response(401, br#"{"msg":"bad key"}"#).classify_unauthorized();
+        assert!(matches!(rejected, Error::Authentication { status, .. } if status == Some(401)));
+        assert!(rejected.to_string().contains("bad key"));
+
+        for status in [400, 403, 404, 500] {
+            let other =
+                Error::from_api_response(status, br#"{"msg":"no"}"#).classify_unauthorized();
+            assert!(
+                matches!(other, Error::Api { status: seen, .. } if seen == status),
+                "{status} must stay an API error: {other:?}"
+            );
+        }
     }
 
     #[tokio::test]

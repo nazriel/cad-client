@@ -11,7 +11,7 @@
 
 use std::fs;
 use std::io::{self, Write as _};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use cad_api::ids::CompanyId;
@@ -20,6 +20,7 @@ use uuid::Uuid;
 
 use crate::config::Environment;
 use crate::support::cache_dir::app_cache_dir;
+use crate::support::private_dir::create_private_dir;
 
 /// How long a fetched list answers without asking the platform again.
 pub(crate) const TTL: Duration = Duration::from_hours(1);
@@ -64,16 +65,12 @@ impl CacheKey {
     }
 
     /// Key for a company-scoped `resource`.
-    ///
-    /// `company` is `None` for "the company the API key selects by default",
-    /// which the key hash already pins down.
     pub(crate) fn company(
         resource: &'static str,
         origin: &str,
         api_key_id: Uuid,
-        company: Option<CompanyId>,
+        company: CompanyId,
     ) -> Self {
-        let company = company.map_or_else(|| "default".to_owned(), |id| id.to_string());
         Self {
             resource,
             scope: format!(
@@ -200,15 +197,6 @@ pub(crate) fn lookup(
 fn epoch_seconds(time: SystemTime) -> u64 {
     time.duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs())
-}
-
-/// The cache lists company names, so only the owner may read it.
-fn create_private_dir(dir: &Path) -> io::Result<()> {
-    let mut builder = fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
-    builder.create(dir)
 }
 
 /// The API key identifier as it appears in a cache key: hashed, so the files

@@ -7,6 +7,7 @@
 //! with candidates on stdout before any configuration is resolved.
 //!
 //! Commands, flags and enum values are completed from the command definition.
+//! Profile names are completed from the profiles file, without any request.
 //! A few identifiers are completed from the platform: `--company-id` and the
 //! positional reporting-period IDs. Those lookups follow strict rules, because
 //! anything a completer prints ends up in the user's prompt:
@@ -34,13 +35,18 @@ use clap::{CommandFactory, FromArgMatches};
 use clap_complete::engine::{ArgValueCompleter, CompletionCandidate};
 use clap_complete::env::{Bash, Elvish, EnvCompleter, Fish, Powershell, Shells, Zsh};
 use clap_complete::{CompleteEnv, Shell};
+use uuid::Uuid;
 
 use self::cache::{Cache, CacheKey, Candidate, Network};
+use crate::cli::args::PICK;
 use crate::cli::{Cli, GlobalArgs};
 use crate::config::{
-    AppConfig, Environment, ProcessEnvironment, resolve_api_key_id, resolve_company_id,
-    resolve_server,
+    AppConfig, Environment, ProcessEnvironment, Selection, resolve_credentials, select,
+    select_company,
 };
+use crate::support::credentials::{self, CredentialStore};
+use crate::support::profiles::{ProfileSet, ProfileStore};
+use crate::support::switch::is_off_word;
 
 /// Name the shell completes, and the program its registration calls back.
 ///
@@ -151,9 +157,56 @@ impl EnvCompleter for AutoloadableZsh {
     }
 }
 
-/// Completes `--company-id` with the companies the API key can access.
+/// Completes a company ID with the companies the login can act on, and `-`,
+/// which picks one from a list.
 pub(crate) fn company_ids() -> ArgValueCompleter {
-    ArgValueCompleter::new(|current: &OsStr| complete(Resource::Companies, current))
+    ArgValueCompleter::new(|current: &OsStr| {
+        let mut candidates = interactive(current);
+        candidates.extend(complete(Resource::OperableCompanies, current));
+        candidates
+    })
+}
+
+/// Completes a profile name with the profiles in the profiles file. It makes
+/// no request and reads no credentials.
+pub(crate) fn profile_names() -> ArgValueCompleter {
+    ArgValueCompleter::new(|current: &OsStr| profiles_named(current))
+}
+
+/// Completes the profile of `use profile` with `-`, which picks one from a
+/// list, and the profile names.
+pub(crate) fn profile_choices() -> ArgValueCompleter {
+    ArgValueCompleter::new(|current: &OsStr| {
+        let mut candidates = interactive(current);
+        candidates.extend(profiles_named(current));
+        candidates
+    })
+}
+
+/// `-`, when the word being completed is a prefix of it.
+fn interactive(current: &OsStr) -> Vec<CompletionCandidate> {
+    match current.to_str() {
+        Some(current) if PICK.starts_with(current) => {
+            vec![CompletionCandidate::new(PICK).help(Some("Select interactively".into()))]
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn profiles_named(current: &OsStr) -> Vec<CompletionCandidate> {
+    let Some(current) = current.to_str() else {
+        return Vec::new();
+    };
+    let profiles = ProfileStore::from_environment(&ProcessEnvironment)
+        .load()
+        .unwrap_or_default();
+    profiles
+        .iter()
+        .filter(|(name, _)| name.as_str().starts_with(current))
+        .map(|(name, profile)| {
+            CompletionCandidate::new(name.as_str()).help(Some(profile.url.clone().into()))
+        })
+        .collect()
 }
 
 /// Completes a reporting-period ID with the periods of the selected company.
@@ -164,8 +217,9 @@ pub(crate) fn reporting_period_ids() -> ArgValueCompleter {
 /// A platform list that can supply completion candidates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Resource {
-    /// Session-level: the same for every company of one API key.
-    Companies,
+    /// Session-level: the same for every company of one API key. Only the
+    /// companies the login can act on, not every company it can see.
+    OperableCompanies,
     /// Company-scoped: depends on `--company-id` or `CAD_COMPANY_ID`.
     ReportingPeriods,
 }
@@ -173,7 +227,7 @@ pub(crate) enum Resource {
 impl Resource {
     const fn name(self) -> &'static str {
         match self {
-            Self::Companies => "companies",
+            Self::OperableCompanies => "operable-companies",
             Self::ReportingPeriods => "reporting-periods",
         }
     }
@@ -184,41 +238,69 @@ fn complete(resource: Resource, current: &OsStr) -> Vec<CompletionCandidate> {
         return Vec::new();
     };
     let words = WORDS.with_borrow(Clone::clone);
-    candidates(resource, &words, &ProcessEnvironment, SystemTime::now())
-        .into_iter()
-        .filter(|candidate| candidate.value.starts_with(current))
-        .map(|candidate| {
-            CompletionCandidate::new(candidate.value).help(candidate.help.map(Into::into))
-        })
-        .collect()
+    let store = CredentialStore::from_environment(&ProcessEnvironment);
+    let profiles = ProfileStore::from_environment(&ProcessEnvironment);
+    candidates(
+        resource,
+        &words,
+        &ProcessEnvironment,
+        &store,
+        &profiles,
+        SystemTime::now(),
+    )
+    .into_iter()
+    .filter(|candidate| candidate.value.starts_with(current))
+    .map(|candidate| CompletionCandidate::new(candidate.value).help(candidate.help.map(Into::into)))
+    .collect()
 }
 
-/// Every candidate for `resource` in the context the preceding `words` and
-/// `environment` describe, unfiltered.
+/// Every candidate for `resource` in the context the preceding `words`,
+/// `environment`, credential `store` and `profiles` describe, unfiltered.
+///
+/// The server and the login are those the command being completed would use,
+/// profile and active profile included.
 pub(crate) fn candidates(
     resource: Resource,
     words: &[OsString],
     environment: &impl Environment,
+    store: &CredentialStore,
+    profiles: &ProfileStore,
     now: SystemTime,
 ) -> Vec<Candidate> {
     let Some(mut global) = global_args(words) else {
         return Vec::new();
     };
     // Without a server and a key identifier there is no cache key either, so
-    // there is nothing to answer from; the secret is only needed to go live.
-    let (Ok(server), Ok(api_key_id)) = (
-        resolve_server(&global, environment),
-        resolve_api_key_id(environment),
-    ) else {
+    // there is nothing to answer from. The key identifier comes from the
+    // environment or from the profile's metadata, never from the credential
+    // store: the secret, and the keyring that may hold it, are only needed to
+    // go live, so a cache hit reads neither.
+    global.request_timeout = lookup::LIVE_TIMEOUT;
+    let Ok(profiles) = profiles.load() else {
         return Vec::new();
     };
-    let origin = server.base_url().as_str();
-    let key = match resource {
-        Resource::Companies => CacheKey::session(resource.name(), origin, api_key_id),
-        Resource::ReportingPeriods => match resolve_company_id(&global, environment) {
-            Ok(company) => CacheKey::company(resource.name(), origin, api_key_id, company),
-            Err(_) => return Vec::new(),
-        },
+    let Ok(selection) = select(&global, environment, &profiles) else {
+        return Vec::new();
+    };
+    let Some(api_key_id) = cache_key_id(environment, &selection, &profiles) else {
+        return Vec::new();
+    };
+    let origin = selection.server.base_url().as_str().to_owned();
+    let origin = origin.as_str();
+    // Reporting periods belong to the selected company; without one there is
+    // nothing to offer, as there is no command to complete them for.
+    let company = match resource {
+        Resource::OperableCompanies => None,
+        Resource::ReportingPeriods => {
+            match select_company(&global, environment, &profiles, &selection) {
+                Ok(Some(company)) => Some(company),
+                Ok(None) | Err(_) => return Vec::new(),
+            }
+        }
+    };
+    let key = match &company {
+        None => CacheKey::session(resource.name(), origin, api_key_id),
+        Some(company) => CacheKey::company(resource.name(), origin, api_key_id, company.id),
     };
     let network = if offline(environment) {
         Network::Disabled
@@ -227,10 +309,33 @@ pub(crate) fn candidates(
     };
     let cache = Cache::from_environment(environment);
     cache::lookup(cache.as_ref(), &key, network, now, || {
-        global.request_timeout = lookup::LIVE_TIMEOUT;
-        let config = AppConfig::resolve(&global, environment).ok()?;
+        // The only place the credential store is read. Credentials that are
+        // for another key than the one the cache key names (the profile was
+        // logged in again since) must not fill that key's entry.
+        let resolved = resolve_credentials(environment, store, &selection).ok()?;
+        if resolved.key_id() != api_key_id {
+            return None;
+        }
+        let config = AppConfig::resolve_with(selection, resolved, company).ok()?;
         lookup::fetch(resource, config)
     })
+}
+
+/// The Key ID the credentials of this request will have, without reading them.
+///
+/// As [`resolve_credentials`] decides: `CAD_API_KEY` or `CAD_API_SECRET` set
+/// means the environment alone, and `CAD_API_KEY` must then be a UUID. Else it
+/// is the `login` the selected profile records in the profiles file.
+fn cache_key_id(
+    environment: &impl Environment,
+    selection: &Selection,
+    profiles: &ProfileSet,
+) -> Option<Uuid> {
+    if credentials::environment_decides(environment) {
+        return environment.get("CAD_API_KEY")?.parse().ok();
+    }
+    let profile = profiles.get(selection.profile_name()?)?;
+    Some(profile.login.as_ref()?.key_id)
 }
 
 /// The global options among the preceding words, parsed leniently: an
@@ -247,12 +352,9 @@ fn global_args(words: &[OsString]) -> Option<GlobalArgs> {
 }
 
 fn offline(environment: &impl Environment) -> bool {
-    environment.get(OFFLINE_VAR).is_some_and(|value| {
-        !matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "" | "0" | "false" | "no" | "off"
-        )
-    })
+    environment
+        .get(OFFLINE_VAR)
+        .is_some_and(|value| !(value.trim().is_empty() || is_off_word(&value)))
 }
 
 /// Position of the word being completed, as bash and zsh report it.

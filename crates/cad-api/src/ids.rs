@@ -71,6 +71,7 @@ macro_rules! identifier {
     };
 }
 
+identifier!(UserId, "A user identifier.");
 identifier!(CompanyId, "A company identifier.");
 identifier!(TemplateCompanyId, "A reusable company-template identifier.");
 identifier!(ActivityCategoryId, "An activity-category identifier.");

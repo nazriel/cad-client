@@ -24,6 +24,6 @@ pub use auth::{
     SessionContext,
 };
 pub use client::{Client, CompanyScoped, Connected, Disconnected};
-pub use config::{Environment, ServerConfig};
+pub use config::ServerConfig;
 pub use domains::companies::Company;
 pub use error::{Error, Result};
