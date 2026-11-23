@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -83,5 +83,5 @@ pub struct DuplicationStatus {
     /// Current background-task state.
     pub shared_task_status: DuplicationTaskStatus,
     /// Last state transition timestamp.
-    pub shared_task_status_updated_on: DateTime<Utc>,
+    pub shared_task_status_updated_on: Timestamp,
 }

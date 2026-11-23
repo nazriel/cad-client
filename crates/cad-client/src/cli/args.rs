@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use cad_api::ids::CompanyId;
 use clap::{Args, ValueEnum, ValueHint};
+use jiff::SignedDuration;
 
 use crate::support::profiles::ProfileName;
 
@@ -196,5 +197,9 @@ fn parse_poll_interval(raw: &str) -> Result<Duration, String> {
 /// hand-rolled parser it replaces turned `--poll-interval 500` into an eight
 /// minute wait instead of the half second the caller meant.
 pub(crate) fn parse_duration(raw: &str) -> Result<Duration, String> {
-    humantime::parse_duration(raw).map_err(|error| format!("invalid duration `{raw}`: {error}"))
+    let parsed: SignedDuration = raw
+        .parse()
+        .map_err(|error| format!("invalid duration `{raw}`: {error}"))?;
+    Duration::try_from(parsed)
+        .map_err(|_| format!("invalid duration `{raw}`: must not be negative"))
 }

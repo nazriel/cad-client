@@ -1,6 +1,6 @@
 //! Generated-report creation and progress inspection.
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -166,7 +166,7 @@ pub struct Report {
     /// JSON version.
     pub json_version: i64,
     /// Creation timestamp.
-    pub created_on: DateTime<Utc>,
+    pub created_on: Timestamp,
     /// Creator's first name.
     pub creator_first_name: Option<String>,
     /// Creator's last name.

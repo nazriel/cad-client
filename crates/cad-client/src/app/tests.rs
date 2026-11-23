@@ -1464,7 +1464,7 @@ fn store_with_login(
                 Uuid::from_u128(0xaa),
                 secrecy::SecretString::from("cad_aks_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_AbCde"),
                 Uuid::nil().into(),
-                chrono::Utc::now(),
+                jiff::Timestamp::now(),
             ),
         )
         .unwrap();

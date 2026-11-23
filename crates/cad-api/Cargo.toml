@@ -9,8 +9,8 @@ description = "Typed Rust client for the Carbon+Alt+Delete API"
 
 [dependencies]
 base64.workspace = true
-chrono.workspace = true
 futures-util.workspace = true
+jiff.workspace = true
 reqwest.workspace = true
 schemars.workspace = true
 secrecy.workspace = true

@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -15,7 +15,7 @@ fn name(value: &str) -> ProfileName {
     value.parse().unwrap()
 }
 
-fn stored_at() -> DateTime<Utc> {
+fn stored_at() -> Timestamp {
     "2026-10-21T12:00:00Z".parse().unwrap()
 }
 
@@ -211,6 +211,27 @@ fn a_set_round_trips_in_the_documented_shape() {
         .map(|entry| entry.unwrap().file_name())
         .collect();
     assert_eq!(names, ["profiles.json"]);
+}
+
+#[test]
+fn a_login_written_by_the_previous_build_is_still_read() {
+    // The text the previous build stored: whole seconds and a `Z` suffix.
+    let read: Login = serde_json::from_value(json!({
+        "keyId": Uuid::from_u128(0xaa),
+        "userId": Uuid::from_u128(0xbb),
+        "email": null,
+        "storage": "file",
+        "storedAt": "2026-10-21T18:43:26Z"
+    }))
+    .unwrap();
+    assert_eq!(
+        read.stored_at,
+        "2026-10-21T18:43:26Z".parse::<Timestamp>().unwrap()
+    );
+    assert_eq!(
+        serde_json::to_value(&read).unwrap()["storedAt"],
+        "2026-10-21T18:43:26Z"
+    );
 }
 
 #[test]

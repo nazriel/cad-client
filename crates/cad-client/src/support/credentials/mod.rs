@@ -25,7 +25,7 @@ mod tests;
 use std::path::{Path, PathBuf};
 
 use cad_api::{ServerConfig, ids::UserId};
-use chrono::{DateTime, SubsecRound, Utc};
+use jiff::{RoundMode, Timestamp, TimestampRound, Unit};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
@@ -75,8 +75,19 @@ pub(crate) enum StoredCredential {
         #[serde(serialize_with = "expose_secret")]
         secret: SecretString,
         user_id: UserId,
-        stored_at: DateTime<Utc>,
+        stored_at: Timestamp,
     },
+}
+
+/// Cuts `moment` to whole seconds, truncating rather than rounding.
+fn whole_seconds(moment: Timestamp) -> Timestamp {
+    moment
+        .round(
+            TimestampRound::new()
+                .smallest(Unit::Second)
+                .mode(RoundMode::Trunc),
+        )
+        .expect("a timestamp rounds to whole seconds within its range")
 }
 
 /// `secrecy` does not serialize a secret on purpose; an entry is the one place
@@ -93,14 +104,14 @@ impl StoredCredential {
         key_id: Uuid,
         secret: SecretString,
         user_id: UserId,
-        stored_at: DateTime<Utc>,
+        stored_at: Timestamp,
     ) -> Self {
         Self::ApiKey {
             origin,
             key_id,
             secret,
             user_id,
-            stored_at: stored_at.trunc_subsecs(0),
+            stored_at: whole_seconds(stored_at),
         }
     }
 
@@ -109,7 +120,7 @@ impl StoredCredential {
         *key_id
     }
 
-    pub(crate) const fn stored_at(&self) -> DateTime<Utc> {
+    pub(crate) const fn stored_at(&self) -> Timestamp {
         let Self::ApiKey { stored_at, .. } = self;
         *stored_at
     }

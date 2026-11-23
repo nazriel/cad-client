@@ -1024,7 +1024,7 @@ fn store_with_login(
                 API_KEY,
                 secrecy::SecretString::from("cad_aks_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_AbCde"),
                 Uuid::nil().into(),
-                chrono::Utc::now(),
+                jiff::Timestamp::now(),
             ),
         )
         .unwrap();
@@ -1052,7 +1052,7 @@ fn login_metadata(key_id: Uuid) -> Login {
         user_id: Uuid::nil().into(),
         email: None,
         storage: Place::File,
-        stored_at: chrono::Utc::now(),
+        stored_at: jiff::Timestamp::now(),
     }
 }
 

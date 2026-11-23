@@ -1,7 +1,7 @@
 //! The login step of `cad-cli use profile`.
 
 use cad_api::{ApiKeyV2Credentials, Client, Connected, ServerConfig};
-use chrono::Utc;
+use jiff::Timestamp;
 use secrecy::{ExposeSecret, SecretString};
 use uuid::Uuid;
 
@@ -71,7 +71,8 @@ pub(super) async fn run(
     let client = connect(context, server, credentials).await?;
     let user_id = client.context().principal.user_id;
 
-    let credential = StoredCredential::api_key(origin.clone(), key_id, secret, user_id, Utc::now());
+    let credential =
+        StoredCredential::api_key(origin.clone(), key_id, secret, user_id, Timestamp::now());
     let location = save(
         terminal,
         store,

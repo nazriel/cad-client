@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use cad_api::domains::reporting_periods::ReportingPeriodDuplicate;
 use cad_api::ids::{DuplicationStatusId, ReportingPeriodId};
-use chrono::Utc;
+use jiff::Timestamp;
 use uuid::Uuid;
 
 use cad_api::domains::reporting_periods::{DuplicationStatus, DuplicationTaskStatus};
@@ -41,7 +41,7 @@ fn status(shared_task_status: DuplicationTaskStatus) -> DuplicationStatus {
         count_measurements_done: 0,
         progress: 0.0,
         shared_task_status,
-        shared_task_status_updated_on: Utc::now(),
+        shared_task_status_updated_on: Timestamp::now(),
     }
 }
 

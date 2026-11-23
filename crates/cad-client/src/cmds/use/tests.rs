@@ -2063,7 +2063,7 @@ async fn forget_leaves_other_profiles_alone_and_warns_about_the_environment() {
                 Uuid::from_u128(9),
                 SecretString::from(SECRET),
                 Uuid::from_u128(10).into(),
-                chrono::Utc::now(),
+                jiff::Timestamp::now(),
             ),
         )
         .unwrap();
