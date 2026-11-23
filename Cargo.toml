@@ -18,7 +18,6 @@ assert_cmd = "2.2.2"
 # (RUSTSEC-2026-0370, -0371 and -0372).
 apple-native-keyring-store = { version = "1", default-features = false, features = ["keychain"] }
 base64 = "0.23.1"
-chrono = { version = "0.4.42", features = ["serde"] }
 clap = { version = "4.5.48", features = ["derive", "wrap_help"] }
 # `unstable-dynamic` provides `CompleteEnv` and `ArgValueCompleter`: shell
 # completion that asks the binary for candidates, including IDs from the API.
@@ -29,19 +28,21 @@ console = "0.16.4"
 dbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust", "vendored"] }
 flate2 = "1.1.10"
 futures-util = "0.3.31"
-humantime = "2.4.0"
 indicatif = "0.18.6"
 # Prompts for `cad-cli` only. The `console` backend reuses the `console` crate
 # above instead of adding crossterm; `fuzzy` filters the `-` pickers as you
 # type (fuzzy-matcher, about 11 KB of release binary).
 inquire = { version = "0.9.4", default-features = false, features = ["console", "fuzzy"] }
+# UTC timestamps and civil dates only: no time-zone database, which would cost
+# binary size. `jiff` 0.2 is the line `schemars`' `jiff02` feature supports.
+jiff = { version = "0.2.46", default-features = false, features = ["std", "serde"] }
 keyring-core = "1"
 predicates = "3.1.4"
 reqwest = { version = "0.12.23", default-features = false, features = ["json", "rustls-tls", "stream"] }
 # Already in the graph as rustls' crypto provider; the updater borrows its
 # SHA-256 rather than compiling a second implementation.
 ring = "0.17.14"
-schemars = { version = "1.2.1", features = ["chrono04"] }
+schemars = { version = "1.2.1", features = ["jiff02"] }
 secrecy = { version = "0.10.3", features = ["serde"] }
 self-replace = "1.5.0"
 semver = "1.0.28"

@@ -169,6 +169,7 @@ mod tests {
 
     use clap::{CommandFactory, Parser};
 
+    use super::args;
     use super::{Cli, render_help_logo};
     use crate::cmds;
 
@@ -316,6 +317,36 @@ mod tests {
     }
 
     #[test]
+    fn durations_keep_every_documented_spelling() {
+        for (raw, expected) in [
+            ("90s", Duration::from_secs(90)),
+            ("1m30s", Duration::from_secs(90)),
+            ("1500ms", Duration::from_millis(1500)),
+            ("30m", Duration::from_mins(30)),
+            ("60s", Duration::from_secs(60)),
+            ("5s", Duration::from_secs(5)),
+        ] {
+            assert_eq!(args::parse_duration(raw), Ok(expected), "{raw}");
+        }
+    }
+
+    #[test]
+    fn durations_reject_bare_numbers_and_negative_values() {
+        for raw in ["500", "0", "1d", "-5s", "5s ago", ""] {
+            let error = args::parse_duration(raw).expect_err(raw);
+            assert!(
+                error.starts_with(&format!("invalid duration `{raw}`: ")),
+                "{error}"
+            );
+        }
+        assert!(
+            args::parse_duration("-5s")
+                .unwrap_err()
+                .ends_with("must not be negative")
+        );
+    }
+
+    #[test]
     fn profile_names_are_checked_by_the_parser() {
         for name in [
             "production",
@@ -357,7 +388,7 @@ mod tests {
             "--input",
             "-",
             "--poll-interval",
-            "0",
+            "0s",
         ])
         .expect_err("a zero poll interval must not parse");
         assert!(error.to_string().contains("minimum"));

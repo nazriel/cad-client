@@ -17,7 +17,6 @@ path = "src/bin/cad-cli.rs"
 
 [dependencies]
 cad-api = { path = "../cad-api" }
-chrono.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
 clap_mangen.workspace = true
@@ -29,9 +28,9 @@ console.workspace = true
 # platform, so this crate makes those requests itself. flate2 inflates both
 # archive formats.
 flate2.workspace = true
-humantime.workspace = true
 indicatif.workspace = true
 inquire.workspace = true
+jiff.workspace = true
 keyring-core.workspace = true
 reqwest.workspace = true
 ring.workspace = true

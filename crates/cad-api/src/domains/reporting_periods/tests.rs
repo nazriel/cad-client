@@ -1,11 +1,12 @@
-use chrono::NaiveDate;
+use jiff::civil::date;
 use reqwest::Method;
+use schemars::schema_for;
 use serde_json::json;
 use uuid::Uuid;
 
 use super::{
     DUPLICATION_PATH, DUPLICATION_STATUS_PATH, DuplicationOptions, REPORTING_PERIOD_DETAILS_SUFFIX,
-    REPORTING_PERIODS_PATH, ReportingPeriodCreate, ReportingPeriodDuplicate,
+    REPORTING_PERIODS_PATH, ReportingPeriod, ReportingPeriodCreate, ReportingPeriodDuplicate,
     ReportingPeriodInputError, ReportingPeriodReplacement, requests,
 };
 use crate::ids::{DuplicationStatusId, ReportingPeriodId};
@@ -15,8 +16,8 @@ fn create_serializes_with_camel_case_contract() {
     let input = ReportingPeriodCreate::new(
         "FY 2026",
         "FY26",
-        NaiveDate::from_ymd_opt(2026, 1, 1).expect("valid fixture"),
-        NaiveDate::from_ymd_opt(2026, 12, 31).expect("valid fixture"),
+        date(2026, 1, 1),
+        date(2026, 12, 31),
         false,
     )
     .expect("valid reporting period");
@@ -67,8 +68,8 @@ fn constructor_rejects_long_short_name() {
     let error = ReportingPeriodCreate::new(
         "FY 2026",
         "TOO-LONG",
-        NaiveDate::from_ymd_opt(2026, 1, 1).expect("valid fixture"),
-        NaiveDate::from_ymd_opt(2026, 12, 31).expect("valid fixture"),
+        date(2026, 1, 1),
+        date(2026, 12, 31),
         false,
     )
     .expect_err("long short name must fail");
@@ -83,8 +84,8 @@ fn request_recipes_define_the_reporting_period_http_contract_once() {
     let create_input = ReportingPeriodCreate::new(
         "FY 2026",
         "FY26",
-        NaiveDate::from_ymd_opt(2026, 1, 1).expect("valid fixture"),
-        NaiveDate::from_ymd_opt(2026, 12, 31).expect("valid fixture"),
+        date(2026, 1, 1),
+        date(2026, 12, 31),
         false,
     )
     .expect("valid reporting period");
@@ -146,4 +147,12 @@ fn request_recipes_define_the_reporting_period_http_contract_once() {
         duplication_status.path,
         format!("{DUPLICATION_STATUS_PATH}/{duplication_status_id}")
     );
+}
+
+#[test]
+fn a_calendar_date_field_is_described_as_a_date() {
+    let schema = serde_json::to_value(schema_for!(ReportingPeriod)).expect("serializable");
+
+    assert_eq!(schema["properties"]["startDate"]["type"], "string");
+    assert_eq!(schema["properties"]["startDate"]["format"], "date");
 }

@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -12,7 +12,7 @@ pub struct TemplateCompany {
     pub id: TemplateCompanyId,
     pub name: Option<String>,
     pub display_name: Option<String>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     pub is_consulting_company: bool,
     pub is_demo_company: bool,
     pub available_client_companies: Option<u64>,

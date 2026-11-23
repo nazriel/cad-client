@@ -1,8 +1,9 @@
 use reqwest::Method;
+use schemars::schema_for;
 use serde_json::json;
 use uuid::Uuid;
 
-use super::{COMPANIES_PATH, CompanyCreate, CompanyTemplateType, requests};
+use super::{COMPANIES_PATH, Company, CompanyCreate, CompanyTemplateType, requests};
 use crate::ids::TemplateCompanyId;
 
 #[test]
@@ -43,4 +44,12 @@ fn create_input_defaults_the_template_and_rejects_unknown_fields() {
     }))
     .expect_err("unknown fields must be rejected");
     assert!(error.to_string().contains("unknown field"));
+}
+
+#[test]
+fn a_timestamp_field_is_described_as_a_date_time() {
+    let schema = serde_json::to_value(schema_for!(Company)).expect("serializable");
+
+    assert_eq!(schema["properties"]["createdAt"]["type"], "string");
+    assert_eq!(schema["properties"]["createdAt"]["format"], "date-time");
 }

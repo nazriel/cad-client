@@ -971,7 +971,7 @@ mod tests {
                     uuid::Uuid::from_u128(7),
                     SecretString::from("cad_aks_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_AbCde"),
                     uuid::Uuid::nil().into(),
-                    chrono::Utc::now(),
+                    jiff::Timestamp::now(),
                 ),
             )
             .unwrap();

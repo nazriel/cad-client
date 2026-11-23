@@ -1,6 +1,6 @@
 use std::fmt;
 
-use chrono::NaiveDate;
+use jiff::civil::Date;
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, de};
 
@@ -18,9 +18,9 @@ pub struct ReportingPeriod {
     /// Short name displayed in compact UIs.
     pub short_name: String,
     /// Inclusive first day.
-    pub start_date: NaiveDate,
+    pub start_date: Date,
     /// Inclusive last day.
-    pub end_date: NaiveDate,
+    pub end_date: Date,
     /// Whether inventory mutations are disabled for the period.
     pub is_locked: bool,
 }
@@ -40,8 +40,8 @@ pub struct ReportingPeriodDetails {
 struct ReportingPeriodInput {
     description: String,
     short_name: String,
-    start_date: NaiveDate,
-    end_date: NaiveDate,
+    start_date: Date,
+    end_date: Date,
     is_locked: bool,
 }
 
@@ -49,8 +49,8 @@ impl ReportingPeriodInput {
     fn new(
         description: impl Into<String>,
         short_name: impl Into<String>,
-        start_date: NaiveDate,
-        end_date: NaiveDate,
+        start_date: Date,
+        end_date: Date,
         is_locked: bool,
     ) -> std::result::Result<Self, ReportingPeriodInputError> {
         let input = Self {
@@ -86,9 +86,9 @@ pub enum ReportingPeriodInputError {
     /// The inclusive start date is later than the end date.
     InvalidDateRange {
         /// Supplied start date.
-        start_date: NaiveDate,
+        start_date: Date,
         /// Supplied end date.
-        end_date: NaiveDate,
+        end_date: Date,
     },
 }
 
@@ -126,8 +126,8 @@ impl ReportingPeriodCreate {
     pub fn new(
         description: impl Into<String>,
         short_name: impl Into<String>,
-        start_date: NaiveDate,
-        end_date: NaiveDate,
+        start_date: Date,
+        end_date: Date,
         is_locked: bool,
     ) -> std::result::Result<Self, ReportingPeriodInputError> {
         ReportingPeriodInput::new(description, short_name, start_date, end_date, is_locked)
@@ -148,13 +148,13 @@ impl ReportingPeriodCreate {
 
     /// Inclusive start date.
     #[must_use]
-    pub const fn start_date(&self) -> NaiveDate {
+    pub const fn start_date(&self) -> Date {
         self.0.start_date
     }
 
     /// Inclusive end date.
     #[must_use]
-    pub const fn end_date(&self) -> NaiveDate {
+    pub const fn end_date(&self) -> Date {
         self.0.end_date
     }
 
@@ -191,8 +191,8 @@ impl ReportingPeriodReplacement {
     pub fn new(
         description: impl Into<String>,
         short_name: impl Into<String>,
-        start_date: NaiveDate,
-        end_date: NaiveDate,
+        start_date: Date,
+        end_date: Date,
         is_locked: bool,
     ) -> std::result::Result<Self, ReportingPeriodInputError> {
         ReportingPeriodInput::new(description, short_name, start_date, end_date, is_locked)

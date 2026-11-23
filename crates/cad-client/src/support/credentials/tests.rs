@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use cad_api::{ServerConfig, ids::UserId};
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use secrecy::{ExposeSecret, SecretString};
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -47,7 +47,7 @@ impl Environment for Env {
     }
 }
 
-fn stored_at() -> DateTime<Utc> {
+fn stored_at() -> Timestamp {
     "2026-10-21T12:00:00Z".parse().unwrap()
 }
 
@@ -122,6 +122,38 @@ fn an_entry_is_stored_as_tagged_json_and_read_back() {
     assert_eq!(key_of(&read), KEY_ID);
     assert_eq!(read.origin(), ORIGIN);
     assert_eq!(read.stored_at(), stored_at());
+}
+
+#[test]
+fn an_entry_written_by_the_previous_build_is_still_read() {
+    // The text the previous build stored: whole seconds and a `Z` suffix.
+    let value = json!({
+        "kind": "apiKey",
+        "origin": ORIGIN,
+        "keyId": KEY_ID,
+        "secret": SECRET,
+        "userId": USER_ID,
+        "storedAt": "2026-10-21T18:43:26Z",
+    });
+    let read = StoredCredential::from_value(&profile(), value.clone()).unwrap();
+    assert_eq!(
+        read.stored_at(),
+        "2026-10-21T18:43:26Z".parse::<Timestamp>().unwrap()
+    );
+    assert_eq!(read.to_value(), value);
+}
+
+#[test]
+fn a_new_entry_cuts_stored_at_to_whole_seconds_by_truncating() {
+    let late: Timestamp = "2026-10-21T18:43:26.999999999Z".parse().unwrap();
+    let entry = StoredCredential::api_key(
+        ORIGIN.to_owned(),
+        KEY_ID,
+        SecretString::from(SECRET),
+        USER_ID,
+        late,
+    );
+    assert_eq!(entry.to_value()["storedAt"], "2026-10-21T18:43:26Z");
 }
 
 #[test]

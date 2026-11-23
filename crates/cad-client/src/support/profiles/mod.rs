@@ -35,7 +35,7 @@ use std::str::FromStr;
 
 use cad_api::domains::companies::Company as PlatformCompany;
 use cad_api::ids::{CompanyId, UserId};
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -125,7 +125,7 @@ pub(crate) struct Login {
     /// could not be read then.
     pub(crate) email: Option<String>,
     pub(crate) storage: Place,
-    pub(crate) stored_at: DateTime<Utc>,
+    pub(crate) stored_at: Timestamp,
 }
 
 impl Login {

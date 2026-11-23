@@ -7,7 +7,8 @@ use std::time::Duration;
 
 use cad_api::domains::reports::{Report, ReportCreate, ReportLanguage, ReportStatus};
 use cad_api::ids::{ReportId, ReportingPeriodId};
-use chrono::{TimeZone, Utc};
+use jiff::Timestamp;
+use jiff::tz::TimeZone;
 use uuid::Uuid;
 
 use super::{ReportWithProgress, ReportsPort, prepare_reports, wait_for_report_with_cancel};
@@ -23,9 +24,8 @@ fn report(day: u32, snapshot: bool) -> ReportWithProgress {
             reporting_period_id: None,
             base_reporting_period_id: None,
             json_version: 1,
-            created_on: Utc
-                .with_ymd_and_hms(2026, 1, day, 0, 0, 0)
-                .single()
+            created_on: format!("2026-01-{day:02}T00:00:00Z")
+                .parse()
                 .expect("valid timestamp"),
             creator_first_name: None,
             creator_last_name: None,
@@ -43,8 +43,8 @@ fn report(day: u32, snapshot: bool) -> ReportWithProgress {
 fn days(reports: &[ReportWithProgress]) -> Vec<u32> {
     reports
         .iter()
-        .map(|report| report.report.created_on.format("%d").to_string())
-        .map(|day| day.parse().expect("numeric day"))
+        .map(|report| report.report.created_on.to_zoned(TimeZone::UTC).day())
+        .map(|day| u32::try_from(day).expect("positive day"))
         .collect()
 }
 
@@ -90,7 +90,7 @@ fn progress(status: ReportStatus, done: u64, failed: u64, count: u64) -> ReportW
             reporting_period_id: Some(ReportingPeriodId::from_uuid(Uuid::new_v4())),
             base_reporting_period_id: Some(ReportingPeriodId::from_uuid(Uuid::new_v4())),
             json_version: 1,
-            created_on: Utc::now(),
+            created_on: Timestamp::now(),
             creator_first_name: None,
             creator_last_name: None,
             report_status: status,
